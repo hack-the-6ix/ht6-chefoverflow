@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🍳 Autonomous Kitchen Arena</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1 id="game-title">🍳 Autonomous Kitchen Arena</h1>
+    
+    <div id="game-container">
+        <div id="ui-panel">
+            <h3>📊 Status</h3>
+            <div id="score-display">Score: <span id="score">0</span></div>
+            <div id="time-display">Time: <span id="time">0:00</span></div>
+            <div id="difficulty-display">Difficulty: <span id="difficulty">1.0x</span></div>
+            <div id="streak-display">Streak: <span id="streak">0</span></div>
+            <div id="rush-display" class="status-pill">Rush: <span id="rush">Idle</span></div>
+            <hr>
+            <h3>👨‍🍳 Selected Chef</h3>
+            <div id="selected-chef"><span id="chef-info">Click a chef (1-5)</span></div>
+            <div id="held-item">Holding: <span id="item-info">-</span></div>
+            <div id="boost-status">Boost: <span id="boost-info">-</span></div>
+            <hr>
+            <h3>🎮 Controls</h3>
+            <div class="controls-help">
+                <div>• Click chef to select</div>
+                <div>• Click station to send</div>
+                <div>• Keys 1-5 select chefs</div>
+                <div>• Space to pause</div>
+                    <div>• Esc to deselect</div>
+                <div>• B to boost selected chef</div>
+            </div>
+                <hr>
+                <h3>📜 House Rules</h3>
+                <button id="rules-toggle" class="small-btn">Show Rules</button>
+                <div id="rules-panel" class="hidden">
+                    <ul id="rules-list">
+                        <!-- Populated by game.js -->
+                    </ul>
+                    <div class="rule-footnote">Friendly restrictions to keep your arena safe and silly.</div>
+                </div>
+            <hr>
+            <button id="start-btn">▶️ Start Game</button>
+            <button id="pause-btn" disabled>⏸️ Pause</button>
+        </div>
+        
+        <div id="main-game">
+            <canvas id="game-canvas"></canvas>
+            
+            <div id="legend">
+                <span class="legend-item"><span class="legend-box" style="background:#5d4037"></span> Ingredients</span>
+                <span class="legend-item"><span class="legend-box" style="background:#bf360c"></span> Stoves</span>
+                <span class="legend-item"><span class="legend-box" style="background:#8d6e63"></span> Cutting</span>
+                <span class="legend-item"><span class="legend-box" style="background:#1565c0"></span> Plating</span>
+                <span class="legend-item"><span class="legend-box" style="background:#6a1b9a"></span> Service</span>
+            </div>
+        </div>
+        
+        <div id="orders-panel">
+            <h3>📋 Orders</h3>
+            <div id="orders-list"></div>
+        </div>
+    </div>
+    
+    <div id="recipes-panel">
+        <h3>📖 How to Make Each Dish</h3>
+        <div class="recipe-grid">
+            <div class="recipe-card">
+                <div class="recipe-title">🥗 Salad</div>
+                <div class="recipe-steps">
+                    1. Get <b>Lettuce</b> → Cutting Board → Plate<br>
+                    2. Get <b>Tomato</b> → Cutting Board → Plate<br>
+                    3. Pick up plate → Deliver to customer
+                </div>
+            </div>
+            <div class="recipe-card">
+                <div class="recipe-title">🥩 Steak</div>
+                <div class="recipe-steps">
+                    1. Get <b>Meat</b> → Stove (wait for green)<br>
+                    2. Pick up cooked meat → Plate<br>
+                    3. Pick up plate → Deliver to customer
+                </div>
+            </div>
+            <div class="recipe-card">
+                <div class="recipe-title">🍔 Burger</div>
+                <div class="recipe-steps">
+                    1. Get <b>Meat</b> → Stove (wait for green)<br>
+                    2. Get <b>Dough</b> (bun) → Plate<br>
+                    3. Pick up cooked meat → Plate<br>
+                    4. Pick up plate → Deliver to customer
+                </div>
+            </div>
+            <div class="recipe-card">
+                <div class="recipe-title">🍕 Pizza</div>
+                <div class="recipe-steps">
+                    1. Get <b>Dough</b> → Stove (wait for green)<br>
+                    2. Get <b>Tomato</b> → Cutting Board → Plate<br>
+                    3. Get <b>Cheese</b> → Plate<br>
+                    4. Pick up cooked dough → Plate<br>
+                    5. Pick up plate → Deliver to customer
+                </div>
+            </div>
+            <div class="recipe-card">
+                <div class="recipe-title">🍔✨ Deluxe Burger</div>
+                <div class="recipe-steps">
+                    1. Get <b>Meat</b> → Stove (wait for green)<br>
+                    2. Get <b>Onion</b> → Cutting Board → Plate<br>
+                    3. Get <b>Dough</b> (bun) → Plate<br>
+                    4. Pick up cooked meat → Plate<br>
+                    5. Pick up plate → Deliver to customer
+                </div>
+            </div>
+        </div>
+        <div class="tips">
+            <b>💡 Tips:</b> Stove progress bar turns <span style="color:#4caf50">green</span> when ready. 
+            Pick up before it turns <span style="color:#f44336">red</span> (burnt)!
+            Items on plating area combine into a dish.
+        </div>
+    </div>
+    
+    <div id="game-over" class="hidden">
+        <h1>🎮 Game Over!</h1>
+        <p>Final Score: <span id="final-score">0</span></p>
+        <p>Best Streak: <span id="best-streak">0</span></p>
+        <button id="restart-btn">🔄 Play Again</button>
+    </div>
+    
+    <script src="game.js"></script>
+</body>
+</html>
