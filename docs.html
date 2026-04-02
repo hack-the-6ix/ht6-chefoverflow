@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kitchen Overflow — Agent API Reference</title>
+    <title>Chef Overflow — Agent API Reference</title>
     <style>
         :root {
             --bg: #1a1a2e;
@@ -133,7 +133,7 @@
     <header>
         <div class="docs-brand">
             <img src="logo.png" alt="Hack the 6ix" class="ht6-logo">
-            <h1>Kitchen Overflow — Agent API Reference</h1>
+            <h1>Chef Overflow — Agent API Reference</h1>
         </div>
         <p class="subtitle">Build an AI agent to run your kitchen. Top scores earn automatic admission to Hack the 6ix 2026.</p>
         <div class="header-row">
@@ -146,7 +146,8 @@
     <p>Five chefs move on a grid kitchen. You send them to stations with <code>KitchenAPI.command(chefId, stationId)</code>. Orders appear at reception stands; each order lists ingredients and the exact preparation state required (raw, chopped, or cooked).</p>
     <p>Chefs take ingredients from bins, chop at cutting boards, cook on stoves, combine items on plating areas with a <strong>clean plate</strong> from the dish rack, then deliver the finished plate to the reception stand that holds that order.</p>
     <p>After a correct delivery, the customer eats and leaves a <strong>dirty dish</strong> on the stand. You must bus it (empty hands), wash at the sink, and return clean plates to the dish rack. Plates are limited—running out stalls the kitchen.</p>
-    <p>The game ends after <strong>five expired orders</strong>. Your score is the sum of delivery points (plus endurance-time bonus after 10 minutes). <strong>Difficulty ramps aggressively</strong>: the first minute is approachable manually; after that, automation is essentially required.</p>
+    <p>The game ends after <strong>three expired orders</strong>. Your score is the sum of delivery points (plus endurance-time bonus after 10 minutes). <strong>Difficulty ramps aggressively</strong>: the first minute is approachable manually; after that, automation is essentially required.</p>
+    <p><strong>Phases (wall-clock):</strong> <em>Tutorial</em> (~0–1:00) serves Salad &amp; Steak; <em>Ramp</em> (~1:00–2:30) adds Burger. <em>Automation</em> (2:30–10:00) introduces harder recipes in stages (Pizza → Deluxe Burger → Feast → Supreme) while spawn rate and order timers tighten on smooth curves. <em>Endurance</em> (10:00+) unlocks the full recipe mix with the tightest pacing and bonus score tick.</p>
 
     <h2>2. Quick Start</h2>
     <ol>
@@ -188,7 +189,7 @@ if (!r.success) console.error(r.error);</code></pre>
     <p><strong>Returns:</strong> <code>undefined</code>.</p>
 
     <h3>KitchenAPI.getState()</h3>
-    <p>Returns a plain snapshot of the game. Ingredient objects are <code>{ ingredient, state }</code>. Plates are <code>{ type: 'plate', dirty: boolean, items: [...] }</code>.</p>
+    <p>Returns a plain snapshot of the game. Ingredient objects are <code>{ ingredient, state }</code>. Plates are <code>{ type: 'plate', dirty: boolean, items: [...] }</code>. The run ends when <code>failedOrders &gt;= maxFailedOrders</code> (both are in the snapshot; <code>maxFailedOrders</code> is <strong>3</strong>).</p>
     <div class="type-block">{
   time: number,              // seconds elapsed
   score: number,
@@ -198,6 +199,7 @@ if (!r.success) console.error(r.error);</code></pre>
   bestStreak: number,
   rush: { active: boolean, timeLeft: number, cooldown: number },
   failedOrders: number,
+  maxFailedOrders: number,   // game ends when failedOrders &gt;= this (currently 3)
   running: boolean,
   paused: boolean,
   gameOver: boolean,

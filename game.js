@@ -26,7 +26,7 @@ const GameState = {
     bestStreak: 0,
     selectedChef: null,
     failedOrders: 0,
-    maxFailedOrders: 5,
+    maxFailedOrders: 3,
     moveTimer: 0,
     moveDelay: 0.18, // Slower chef movement
     rush: {
@@ -34,6 +34,8 @@ const GameState = {
         timeLeft: 0,
         cooldown: 20
     },
+    /** Frametime accumulator for steadier order spawn rate than pure Poisson */
+    orderSpawnDebt: 0,
     ordersDelivered: 0,
     phaseBanner60: false,
     phaseBanner150: false,
@@ -74,26 +76,92 @@ let lastEmittedPhase = 'tutorial';
 function getPhaseKey(time) {
     if (time < 60) return 'tutorial';
     if (time < 150) return 'ramp';
-    return 'automation';
+    if (time < 600) return 'automation';
+    return 'endurance';
 }
 
 function getApiPhase(time) {
-    if (time >= 600) return 'endurance';
-    const k = getPhaseKey(time);
-    if (k === 'tutorial') return 'tutorial';
-    if (k === 'ramp') return 'ramp';
-    return 'automation';
+    return getPhaseKey(time);
+}
+
+/** Rush + spawn pressure use the same rules for automation and endurance */
+function isHighPressurePhase(phase) {
+    return phase === 'automation' || phase === 'endurance';
+}
+
+function smoothstep01(x, edge0, edge1) {
+    if (x <= edge0) return 0;
+    if (x >= edge1) return 1;
+    const t = (x - edge0) / (edge1 - edge0);
+    return t * t * (3 - 2 * t);
+}
+
+/**
+ * Graduated recipe pool so automation does not dump all expert dishes at 2:30.
+ * endurance → null = full RECIPES table.
+ */
+function getRecipeNamesForSpawn(time) {
+    const phase = getPhaseKey(time);
+    if (phase === 'tutorial') return RECIPE_NAMES_BY_PHASE.tutorial;
+    if (phase === 'ramp') return RECIPE_NAMES_BY_PHASE.ramp;
+    if (phase === 'endurance') return null;
+
+    const rel = time - 150;
+    const pool = ['Salad', 'Steak', 'Burger'];
+    if (rel >= 35) pool.push('Pizza');
+    if (rel >= 95) pool.push('Deluxe Burger');
+    if (rel >= 170) pool.push('Feast Platter');
+    if (rel >= 255) pool.push('Supreme Pizza');
+    return pool;
+}
+
+/** Seconds between orders on average (before debt resolution); rush tightens further */
+function baseOrderSpawnInterval(time, rushActive) {
+    let normal;
+    if (time < 60) {
+        normal = 23 - smoothstep01(time, 0, 55) * 7;
+    } else if (time < 150) {
+        normal = 15.5 - smoothstep01(time, 60, 145) * 4;
+    } else {
+        const u = smoothstep01(time, 150, 580);
+        normal = 11.5 - u * 5;
+        if (time >= 600) normal *= 0.9;
+    }
+    if (rushActive) normal *= 0.52;
+    return Math.max(2.75, normal);
+}
+
+function orderTimeLimitForSpawn(time) {
+    const phase = getPhaseKey(time);
+    if (phase === 'tutorial') {
+        return 64 + Math.floor(Math.random() * 6);
+    }
+    if (phase === 'ramp') {
+        return 50 + Math.floor(Math.random() * 6);
+    }
+    let sec = 42;
+    if (phase === 'automation' || phase === 'endurance') {
+        const u = smoothstep01(time, 150, 520);
+        sec = Math.round(42 - u * 11);
+    }
+    if (phase === 'endurance') sec -= 3;
+    sec = Math.max(24, sec);
+    return sec + Math.floor(Math.random() * 5);
 }
 
 function computeDifficulty(time) {
     const phase = getPhaseKey(time);
     if (phase === 'tutorial') {
-        return 1.0 + (time / 60) * 0.15;
+        return 1.0 + smoothstep01(time, 0, 58) * 0.12;
     }
     if (phase === 'ramp') {
-        return 1.15 + ((time - 60) / 90) * 0.45;
+        return 1.12 + smoothstep01(time, 60, 148) * 0.38;
     }
-    return 1.8 + (time - 150) * 0.002;
+    if (phase === 'automation') {
+        return 1.5 + smoothstep01(time, 150, 595) * 1.05;
+    }
+    const d600 = 1.5 + 1.05;
+    return d600 + (time - 600) * 0.0028;
 }
 
 // =============================================
@@ -288,8 +356,7 @@ const RECIPES = {
 
 const RECIPE_NAMES_BY_PHASE = {
     tutorial: ['Salad', 'Steak'],
-    ramp: ['Salad', 'Steak', 'Burger'],
-    automation: null
+    ramp: ['Salad', 'Steak', 'Burger']
 };
 
 // =============================================
@@ -524,35 +591,30 @@ function failOrderNoStandSlot() {
     showFloatingText(10, 7, 'No room! Order lost!', '#f44336', { fontSize: 22, life: 3, maxLife: 3, drift: 0 });
 }
 
+/** @returns {boolean} true if a spawn was resolved (new order or high-pressure penalty) */
 function spawnOrder() {
     const phase = getPhaseKey(GameState.time);
     const availableStands = stations.receptionStands.filter(standFreeForOrder);
 
     if (availableStands.length === 0) {
-        if (phase === 'automation') {
+        if (isHighPressurePhase(phase)) {
             failOrderNoStandSlot();
+            return true;
         }
-        return;
+        return false;
     }
 
     const stand = availableStands[Math.floor(Math.random() * availableStands.length)];
 
-    const names = RECIPE_NAMES_BY_PHASE[phase];
+    const names = getRecipeNamesForSpawn(GameState.time);
     const recipeEntries = names
         ? names.map(name => [name, RECIPES[name]])
         : Object.entries(RECIPES);
     const [dishName, recipe] = recipeEntries[Math.floor(Math.random() * recipeEntries.length)];
 
-    let timeLimit;
-    if (phase === 'tutorial') {
-        timeLimit = 62 + Math.floor(Math.random() * 7);
-    } else if (phase === 'ramp') {
-        timeLimit = 44 + Math.floor(Math.random() * 5);
-    } else {
-        timeLimit = 30 + Math.floor(Math.random() * 6);
-    }
+    const timeLimit = orderTimeLimitForSpawn(GameState.time);
 
-    const vip = Math.random() < 0.12;
+    const vip = Math.random() < Math.min(0.16, 0.07 + GameState.time / 9000);
 
     const order = {
         id: orderIdCounter++,
@@ -575,6 +637,7 @@ function spawnOrder() {
         standId: order.standId,
         components: order.recipe.components.map(c => ({ ingredient: c.ingredient, state: c.state }))
     });
+    return true;
 }
 
 // =============================================
@@ -1190,7 +1253,7 @@ function update(dt) {
         GameState.rush.timeLeft -= dt;
         if (GameState.rush.timeLeft <= 0) {
             GameState.rush.active = false;
-            GameState.rush.cooldown = phase === 'automation'
+            GameState.rush.cooldown = isHighPressurePhase(phase)
                 ? 15 + Math.random() * 5
                 : 30 + Math.random() * 25;
         }
@@ -1198,23 +1261,23 @@ function update(dt) {
         GameState.rush.cooldown -= dt;
         if (GameState.rush.cooldown <= 0) {
             GameState.rush.active = true;
-            GameState.rush.timeLeft = phase === 'automation'
+            GameState.rush.timeLeft = isHighPressurePhase(phase)
                 ? 12 + Math.random() * 8
                 : 10 + Math.random() * 6;
             showFloatingText(12, 2, 'RUSH HOUR!', '#ffd54f');
         }
     }
 
-    let orderInterval;
-    if (phase === 'tutorial') {
-        orderInterval = GameState.rush.active ? 8 + Math.random() * 4 : 15 + Math.random() * 5;
-    } else if (phase === 'ramp') {
-        orderInterval = GameState.rush.active ? 6 + Math.random() * 3 : 10 + Math.random() * 2;
-    } else {
-        orderInterval = GameState.rush.active ? 3 + Math.random() : 5 + Math.random() * 2;
-    }
-    if (Math.random() < dt / orderInterval) {
-        spawnOrder();
+    const spawnEvery = baseOrderSpawnInterval(GameState.time, GameState.rush.active);
+    GameState.orderSpawnDebt += dt / spawnEvery;
+    let spawnsThisFrame = 0;
+    const maxSpawnsPerFrame = 2;
+    while (GameState.orderSpawnDebt >= 1 && spawnsThisFrame < maxSpawnsPerFrame) {
+        if (!spawnOrder()) {
+            break;
+        }
+        GameState.orderSpawnDebt -= 1;
+        spawnsThisFrame++;
     }
     
     // Update chefs
@@ -2331,6 +2394,7 @@ function startGame() {
     GameState.rush.active = false;
     GameState.rush.timeLeft = 0;
     GameState.rush.cooldown = 20;
+    GameState.orderSpawnDebt = 0;
     
     // Reset stations
     stations.stoves.forEach(s => { s.cooking = null; s.cookTime = 0; s.busy = false; });
@@ -2416,7 +2480,7 @@ if (shareBtn) {
         const score = document.getElementById('final-score')?.textContent || '0';
         const grade = document.getElementById('final-grade')?.textContent || '?';
         const streak = document.getElementById('best-streak')?.textContent || '0';
-        const text = `I scored ${score} in Kitchen Overflow (Grade: ${grade}, Streak: ${streak}) — Can you beat me? https://example.com/kitchen`;
+        const text = `I scored ${score} in Chef Overflow (Grade: ${grade}, Streak: ${streak}) — Can you beat me? https://example.com/chef`;
         navigator.clipboard.writeText(text).catch(() => {});
     });
 }
@@ -2447,6 +2511,7 @@ window.KitchenAPI = {
         bestStreak: GameState.bestStreak,
         rush: { ...GameState.rush },
         failedOrders: GameState.failedOrders,
+        maxFailedOrders: GameState.maxFailedOrders,
         phase: getApiPhase(GameState.time),
         running: GameState.running,
         paused: GameState.paused,
@@ -2629,7 +2694,7 @@ initChefs();
 render();
 
 console.log(`
-Kitchen Overflow v2.0
+Chef Overflow v2.0
 ================================
 API: window.KitchenAPI
 
