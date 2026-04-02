@@ -33,15 +33,75 @@ const GameState = {
         active: false,
         timeLeft: 0,
         cooldown: 20
+    },
+    ordersDelivered: 0,
+    phaseBanner60: false,
+    phaseBanner150: false,
+    phaseBanner600Float: false,
+    gameOver: false
+};
+
+// =============================================
+// EVENT BUS (KitchenAPI agent hooks)
+// =============================================
+const EventBus = {
+    _listeners: {},
+    on(event, callback) {
+        if (!this._listeners[event]) this._listeners[event] = [];
+        this._listeners[event].push(callback);
+        return () => {
+            this._listeners[event] = this._listeners[event].filter(cb => cb !== callback);
+        };
+    },
+    emit(event, data) {
+        if (this._listeners[event]) {
+            this._listeners[event].forEach(cb => {
+                try {
+                    cb(data);
+                } catch (e) {
+                    console.error(`KitchenAPI event error (${event}):`, e);
+                }
+            });
+        }
+    },
+    clear() {
+        this._listeners = {};
     }
 };
+
+let lastEmittedPhase = 'tutorial';
+
+function getPhaseKey(time) {
+    if (time < 60) return 'tutorial';
+    if (time < 150) return 'ramp';
+    return 'automation';
+}
+
+function getApiPhase(time) {
+    if (time >= 600) return 'endurance';
+    const k = getPhaseKey(time);
+    if (k === 'tutorial') return 'tutorial';
+    if (k === 'ramp') return 'ramp';
+    return 'automation';
+}
+
+function computeDifficulty(time) {
+    const phase = getPhaseKey(time);
+    if (phase === 'tutorial') {
+        return 1.0 + (time / 60) * 0.15;
+    }
+    if (phase === 'ramp') {
+        return 1.15 + ((time - 60) / 90) * 0.45;
+    }
+    return 1.8 + (time - 150) * 0.002;
+}
 
 // =============================================
 // COLORS
 // =============================================
 const COLORS = {
-    floor: '#2a2a4a',
-    floorTile: '#252545',
+    floor: '#1e2a38',
+    floorTile: '#1c2836',
     wall: '#4a4a6a',
     counter: '#6a6a8a',
     
@@ -71,6 +131,61 @@ const COLORS = {
     cooked: '#aa8855',
     burnt: '#222'
 };
+
+const INGREDIENT_BIN_EMOJI = {
+    tomato: '🍅',
+    lettuce: '🥬',
+    onion: '🧅',
+    meat: '🥩',
+    dough: '🍞',
+    cheese: '🧀'
+};
+
+function floorFillColor(x, y) {
+    const light = (x + y) % 2 === 0;
+    if (x >= 14) {
+        return light ? '#252838' : '#1c2034';
+    }
+    return light ? '#1e2a38' : '#1c2836';
+}
+
+function drawRoundedHBar(px, py, w, h, progress01, fillColor, trackColor) {
+    const r = h / 2;
+    ctx.fillStyle = trackColor;
+    ctx.beginPath();
+    ctx.roundRect(px, py, w, h, r);
+    ctx.fill();
+    const clamped = Math.max(0, Math.min(1, progress01));
+    let pw = clamped * w;
+    if (clamped > 0 && pw < h) pw = h;
+    if (pw > 0) {
+        ctx.fillStyle = fillColor;
+        ctx.beginPath();
+        ctx.roundRect(px, py, Math.min(w, pw), h, r);
+        ctx.fill();
+    }
+}
+
+function pathPreviewTintForStation(info) {
+    if (!info) return null;
+    const t = {
+        ingredientBin: COLORS.ingredientBin,
+        stove: COLORS.stove,
+        cuttingBoard: COLORS.cuttingBoard,
+        platingArea: COLORS.platingArea,
+        dishRack: '#8d6e63',
+        trash: '#37474f',
+        sink: '#78909c',
+        receptionStand: COLORS.receptionStand,
+        counter: COLORS.counter
+    };
+    return t[info.type] || null;
+}
+
+function standNumberFromStandId(standId) {
+    const m = /^reception_(\d+)$/.exec(standId);
+    return m ? parseInt(m[1], 10) + 1 : 0;
+}
 
 // =============================================
 // INGREDIENTS & RECIPES
@@ -144,7 +259,37 @@ const RECIPES = {
         ],
         difficulty: 3,
         instructions: '1. Chop Onion\n2. Cook Meat\n3. Get Dough\n4. Plate all three'
+    },
+    'Feast Platter': {
+        emoji: '🍱',
+        steps: ['cook_meat', 'chop_lettuce', 'chop_tomato', 'cheese_plate'],
+        components: [
+            { ingredient: 'meat', state: 'cooked' },
+            { ingredient: 'lettuce', state: 'chopped' },
+            { ingredient: 'tomato', state: 'chopped' },
+            { ingredient: 'cheese', state: 'raw' }
+        ],
+        difficulty: 4,
+        instructions: '1. Cook Meat\n2. Chop Lettuce & Tomato\n3. Add Cheese on plate\n4. Deliver'
+    },
+    'Supreme Pizza': {
+        emoji: '🍕✨',
+        steps: ['cook_dough', 'chop_tomato', 'chop_onion', 'cheese_plate'],
+        components: [
+            { ingredient: 'dough', state: 'cooked' },
+            { ingredient: 'tomato', state: 'chopped' },
+            { ingredient: 'onion', state: 'chopped' },
+            { ingredient: 'cheese', state: 'raw' }
+        ],
+        difficulty: 4,
+        instructions: '1. Cook Dough\n2. Chop Tomato & Onion\n3. Cheese on plate\n4. Deliver'
     }
+};
+
+const RECIPE_NAMES_BY_PHASE = {
+    tutorial: ['Salad', 'Steak'],
+    ramp: ['Salad', 'Steak', 'Burger'],
+    automation: null
 };
 
 // =============================================
@@ -368,22 +513,47 @@ function initChefs() {
 const orders = [];
 let orderIdCounter = 0;
 
+function standFreeForOrder(s) {
+    return !s.order && !s.customer && !s.hasDirtyDish;
+}
+
+function failOrderNoStandSlot() {
+    GameState.failedOrders++;
+    GameState.score -= 50;
+    GameState.streak = 0;
+    showFloatingText(10, 7, 'No room! Order lost!', '#f44336', { fontSize: 22, life: 3, maxLife: 3, drift: 0 });
+}
+
 function spawnOrder() {
-    const availableStands = stations.receptionStands.filter(s => !s.order);
-    if (availableStands.length === 0) return;
-    
+    const phase = getPhaseKey(GameState.time);
+    const availableStands = stations.receptionStands.filter(standFreeForOrder);
+
+    if (availableStands.length === 0) {
+        if (phase === 'automation') {
+            failOrderNoStandSlot();
+        }
+        return;
+    }
+
     const stand = availableStands[Math.floor(Math.random() * availableStands.length)];
-    
-    // Select recipe based on difficulty
-    const availableRecipes = Object.entries(RECIPES).filter(
-        ([name, recipe]) => recipe.difficulty <= Math.ceil(GameState.difficulty)
-    );
-    const [dishName, recipe] = availableRecipes[Math.floor(Math.random() * availableRecipes.length)];
-    
-    const baseTime = 70 - (GameState.difficulty * 5);
-    const timeLimit = Math.max(30, baseTime);
+
+    const names = RECIPE_NAMES_BY_PHASE[phase];
+    const recipeEntries = names
+        ? names.map(name => [name, RECIPES[name]])
+        : Object.entries(RECIPES);
+    const [dishName, recipe] = recipeEntries[Math.floor(Math.random() * recipeEntries.length)];
+
+    let timeLimit;
+    if (phase === 'tutorial') {
+        timeLimit = 62 + Math.floor(Math.random() * 7);
+    } else if (phase === 'ramp') {
+        timeLimit = 44 + Math.floor(Math.random() * 5);
+    } else {
+        timeLimit = 30 + Math.floor(Math.random() * 6);
+    }
+
     const vip = Math.random() < 0.12;
-    
+
     const order = {
         id: orderIdCounter++,
         dish: dishName,
@@ -394,9 +564,17 @@ function spawnOrder() {
         vip: vip,
         standId: stand.id
     };
-    
+
     stand.order = order;
     orders.push(order);
+
+    EventBus.emit('orderSpawned', {
+        id: order.id,
+        dish: order.dish,
+        timeLeft: order.timeLeft,
+        standId: order.standId,
+        components: order.recipe.components.map(c => ({ ingredient: c.ingredient, state: c.state }))
+    });
 }
 
 // =============================================
@@ -503,6 +681,12 @@ function findAdjacentWalkable(stationX, stationY) {
     }
     
     return null;
+}
+
+/** True if chef is on a walkable tile orthogonally adjacent to the station cell. */
+function isChefAdjacentToStation(chefX, chefY, stationX, stationY) {
+    const manhattan = Math.abs(chefX - stationX) + Math.abs(chefY - stationY);
+    return manhattan === 1 && isWalkable(chefX, chefY);
 }
 
 // =============================================
@@ -616,7 +800,11 @@ function interactWithStation(chef, stationInfo) {
                     station.dirty -= 1;
                     showFloatingText(chef.x, chef.y, 'Picked up dirty plate 🟤', '#ffcc80');
                 } else {
-                    showFloatingText(station.x, station.y, 'No clean plates left!', '#ffb74d');
+                    if (countCleanPlatesInWorld() === 0) {
+                        showFloatingText(station.x, station.y, 'No clean plates!', '#ffb74d');
+                    } else {
+                        showFloatingText(station.x, station.y, 'No clean plates here — check the line', '#ffb74d');
+                    }
                 }
             } else if (chef.holding && chef.holding.type === 'plate') {
                 // Returning plates: if empty -> add to clean count (respect max), if dirty -> add to dirty pile
@@ -786,9 +974,10 @@ function interactWithStation(chef, stationInfo) {
                     GameState.score += totalScore;
                     GameState.streak += 1;
                     GameState.bestStreak = Math.max(GameState.bestStreak, GameState.streak);
+                    GameState.ordersDelivered += 1;
 
                     const vipTag = station.order.vip ? ' VIP' : '';
-                    showFloatingText(station.x, station.y, `+${totalScore}!${vipTag}`, '#4caf50');
+                    showFloatingText(station.x, station.y, `+${totalScore}!${vipTag}`, '#4caf50', { kind: 'score', fontSize: 22 });
 
                     // Start customer eating lifecycle
                     const deliveredOrder = station.order;
@@ -797,8 +986,16 @@ function interactWithStation(chef, stationInfo) {
                     if (orderIndex > -1) orders.splice(orderIndex, 1);
                     station.customer = { timeLeft: 10 }; // seconds to eat
                     station.hasDirtyDish = false;
+
+                    EventBus.emit('orderDelivered', {
+                        id: deliveredOrder.id,
+                        dish: deliveredOrder.dish,
+                        score: totalScore,
+                        streak: GameState.streak
+                    });
                 } else {
-                    showFloatingText(station.x, station.y, '❌ Wrong dish!', '#f44336');
+                    EventBus.emit('orderFailed', { dish: station.order.dish });
+                    showFloatingText(station.x, station.y, '❌ Wrong dish!', '#f44336', { kind: 'error' });
                     GameState.streak = 0;
                 }
                 chef.holding = null;
@@ -841,26 +1038,58 @@ function plateSummary(plate) {
     return plate.items.map(i => i.ingredient).join(', ');
 }
 
+function countCleanPlatesInWorld() {
+    let n = 0;
+    for (const rack of stations.dishRacks) {
+        n += rack.count || 0;
+    }
+    for (const p of stations.platingAreas) {
+        if (!p.items || p.items.length !== 1) continue;
+        const top = p.items[0];
+        if (top.type === 'plate' && !top.dirty && (!top.items || top.items.length === 0)) n++;
+    }
+    for (const c of stations.counters) {
+        if (!c.items || c.items.length === 0) continue;
+        const top = c.items[c.items.length - 1];
+        if (top.type === 'plate' && !top.dirty && (!top.items || top.items.length === 0)) n++;
+    }
+    for (const ch of chefs) {
+        if (ch.holding && ch.holding.type === 'plate' && !ch.holding.dirty &&
+            (!ch.holding.items || ch.holding.items.length === 0)) {
+            n++;
+        }
+    }
+    return n;
+}
+
 // =============================================
 // FLOATING TEXT
 // =============================================
 const floatingTexts = [];
 
-function showFloatingText(x, y, text, color) {
+function showFloatingText(x, y, text, color, opts) {
+    opts = opts || {};
+    const fontSize = opts.fontSize != null ? opts.fontSize : 14;
+    const life = opts.life != null ? opts.life : 1.5;
+    const drift = opts.drift != null ? opts.drift : 30;
     floatingTexts.push({
         x: x * CELL_SIZE + CELL_SIZE / 2,
         y: y * CELL_SIZE,
         text: text,
         color: color,
-        life: 1.5,
-        maxLife: 1.5
+        life: life,
+        maxLife: life,
+        fontSize: fontSize,
+        drift: drift,
+        kind: opts.kind || null
     });
 }
 
 function updateFloatingTexts(dt) {
     for (let i = floatingTexts.length - 1; i >= 0; i--) {
         floatingTexts[i].life -= dt;
-        floatingTexts[i].y -= 30 * dt;
+        const drift = floatingTexts[i].drift != null ? floatingTexts[i].drift : 30;
+        floatingTexts[i].y -= drift * dt;
         if (floatingTexts[i].life <= 0) {
             floatingTexts.splice(i, 1);
         }
@@ -868,13 +1097,48 @@ function updateFloatingTexts(dt) {
 }
 
 function drawFloatingTexts() {
+    const fontFamily = 'system-ui, "Segoe UI", sans-serif';
     for (const ft of floatingTexts) {
         const alpha = ft.life / ft.maxLife;
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = ft.color;
-        ctx.font = 'bold 14px Arial';
+        const fontPx = ft.fontSize || 14;
+        const isScore = ft.kind === 'score' || (/^\+\d/.test(ft.text) && ft.color === '#4caf50');
+        const usePx = isScore ? Math.max(fontPx, 20) : fontPx;
+        ctx.font = 'bold ' + usePx + 'px ' + fontFamily;
         ctx.textAlign = 'center';
-        ctx.fillText(ft.text, ft.x, ft.y);
+        ctx.textBaseline = 'middle';
+
+        const metrics = ctx.measureText(ft.text);
+        const padX = 8;
+        const padY = 4;
+        const w = metrics.width + padX * 2;
+        const h = usePx + padY * 2;
+        let bg = 'rgba(0,0,0,0.6)';
+        if (ft.kind === 'error' || (ft.text.includes('❌') && ft.color === '#f44336')) {
+            bg = 'rgba(183, 28, 28, 0.88)';
+        } else if (ft.kind === 'phase') {
+            bg = 'rgba(0,0,0,0.75)';
+        }
+
+        let scale = 1;
+        if (ft.kind === 'phase') {
+            const age = 1 - ft.life / ft.maxLife;
+            scale = 0.82 + 0.18 * Math.min(1, age * 6);
+        }
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        const bx = ft.x - w / 2;
+        const by = ft.y - h / 2;
+        ctx.fillStyle = bg;
+        ctx.beginPath();
+        ctx.roundRect(bx, by, w, h, 8);
+        ctx.fill();
+
+        ctx.translate(ft.x, ft.y);
+        ctx.scale(scale, scale);
+        ctx.fillStyle = ft.color;
+        ctx.fillText(ft.text, 0, 0);
+        ctx.restore();
         ctx.globalAlpha = 1;
     }
 }
@@ -900,29 +1164,55 @@ function gameLoop(currentTime) {
 
 function update(dt) {
     GameState.time += dt;
-    
-    // Update difficulty
-    GameState.difficulty = 1 + GameState.time / 90; // Slower difficulty ramp
 
-    // Update rush hour
+    GameState.difficulty = computeDifficulty(GameState.time);
+
+    if (!GameState.phaseBanner60 && GameState.time >= 60) {
+        GameState.phaseBanner60 = true;
+        showFloatingText(10, 7, '⚠️ PICKING UP THE PACE!', '#ffeb3b', { fontSize: 28, life: 3, maxLife: 3, drift: 0, kind: 'phase' });
+    }
+    if (!GameState.phaseBanner150 && GameState.time >= 150) {
+        GameState.phaseBanner150 = true;
+        showFloatingText(10, 7, '🤖 CAN YOU KEEP UP?', '#f44336', { fontSize: 28, life: 3, maxLife: 3, drift: 0, kind: 'phase' });
+    }
+    if (!GameState.phaseBanner600Float && GameState.time >= 600) {
+        GameState.phaseBanner600Float = true;
+        showFloatingText(10, 7, '🏆 ENDURANCE MODE', '#ffc107', { fontSize: 28, life: 4, maxLife: 4, drift: 0, kind: 'phase' });
+    }
+
+    if (GameState.time >= 600) {
+        GameState.score += dt * GameState.difficulty;
+    }
+
+    const phase = getPhaseKey(GameState.time);
+
     if (GameState.rush.active) {
         GameState.rush.timeLeft -= dt;
         if (GameState.rush.timeLeft <= 0) {
             GameState.rush.active = false;
-            GameState.rush.cooldown = 30 + Math.random() * 25;
+            GameState.rush.cooldown = phase === 'automation'
+                ? 15 + Math.random() * 5
+                : 30 + Math.random() * 25;
         }
     } else {
         GameState.rush.cooldown -= dt;
         if (GameState.rush.cooldown <= 0) {
             GameState.rush.active = true;
-            GameState.rush.timeLeft = 10 + Math.random() * 6;
+            GameState.rush.timeLeft = phase === 'automation'
+                ? 12 + Math.random() * 8
+                : 10 + Math.random() * 6;
             showFloatingText(12, 2, 'RUSH HOUR!', '#ffd54f');
         }
     }
-    
-    // Spawn orders
-    const baseInterval = GameState.rush.active ? 10 : 20;
-    const orderInterval = Math.max(6, baseInterval - GameState.difficulty * 2);
+
+    let orderInterval;
+    if (phase === 'tutorial') {
+        orderInterval = GameState.rush.active ? 8 + Math.random() * 4 : 15 + Math.random() * 5;
+    } else if (phase === 'ramp') {
+        orderInterval = GameState.rush.active ? 6 + Math.random() * 3 : 10 + Math.random() * 2;
+    } else {
+        orderInterval = GameState.rush.active ? 3 + Math.random() : 5 + Math.random() * 2;
+    }
     if (Math.random() < dt / orderInterval) {
         spawnOrder();
     }
@@ -945,6 +1235,14 @@ function update(dt) {
     if (GameState.failedOrders >= GameState.maxFailedOrders) {
         endGame();
     }
+
+    const apiPhase = getApiPhase(GameState.time);
+    if (apiPhase !== lastEmittedPhase) {
+        lastEmittedPhase = apiPhase;
+        EventBus.emit('phaseChanged', { phase: apiPhase });
+    }
+
+    EventBus.emit('tick', { dt, time: GameState.time });
     
     // Update UI
     updateUI();
@@ -1065,18 +1363,25 @@ function updateOrders(dt) {
         
         if (orders[i].timeLeft <= 0) {
             // Order expired
+            const expired = orders[i];
+            EventBus.emit('orderExpired', {
+                id: expired.id,
+                dish: expired.dish,
+                standId: expired.standId
+            });
+
             GameState.failedOrders++;
             GameState.score -= 50;
             GameState.streak = 0;
             
             showFloatingText(
-                stations.receptionStands.find(s => s.order === orders[i])?.x || 17,
-                stations.receptionStands.find(s => s.order === orders[i])?.y || 6,
+                stations.receptionStands.find(s => s.order === expired)?.x || 17,
+                stations.receptionStands.find(s => s.order === expired)?.y || 6,
                 '⏰ Order expired!', '#f44336'
             );
             
             // Clear from stand
-            const stand = stations.receptionStands.find(s => s.order === orders[i]);
+            const stand = stations.receptionStands.find(s => s.order === expired);
             if (stand) stand.order = null;
             
             orders.splice(i, 1);
@@ -1090,51 +1395,81 @@ function updateOrders(dt) {
 function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Draw checkered floor
     for (let y = 0; y < MAP_HEIGHT; y++) {
         for (let x = 0; x < MAP_WIDTH; x++) {
-            const isLight = (x + y) % 2 === 0;
             if (map[y][x] === TILE_TYPES.FLOOR) {
-                ctx.fillStyle = isLight ? COLORS.floor : COLORS.floorTile;
+                ctx.fillStyle = floorFillColor(x, y);
                 ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
             } else {
                 drawTile(x, y, map[y][x]);
             }
         }
     }
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+    ctx.lineWidth = 1;
+    for (let y = 0; y < MAP_HEIGHT; y++) {
+        for (let x = 0; x < MAP_WIDTH; x++) {
+            ctx.strokeRect(x * CELL_SIZE + 0.5, y * CELL_SIZE + 0.5, CELL_SIZE - 1, CELL_SIZE - 1);
+        }
+    }
     
-    // Draw stations with details
     drawStations();
     
-    // Draw chefs
     for (const chef of chefs) {
         drawChef(chef);
     }
 
-    // Draw counters on top so items sit visibly on the surface
     drawCounters();
     
-    // Draw path preview for selected chef
     if (GameState.selectedChef !== null) {
         const chef = chefs[GameState.selectedChef];
         if (chef.path.length > 0) {
+            const cx = chef.x * CELL_SIZE + CELL_SIZE / 2;
+            const cy = chef.y * CELL_SIZE + CELL_SIZE / 2;
             ctx.strokeStyle = 'rgba(255,255,255,0.3)';
             ctx.lineWidth = 2;
             ctx.setLineDash([5, 5]);
             ctx.beginPath();
-            ctx.moveTo(chef.x * CELL_SIZE + CELL_SIZE/2, chef.y * CELL_SIZE + CELL_SIZE/2);
+            ctx.moveTo(cx, cy);
             for (const p of chef.path) {
-                ctx.lineTo(p.x * CELL_SIZE + CELL_SIZE/2, p.y * CELL_SIZE + CELL_SIZE/2);
+                ctx.lineTo(p.x * CELL_SIZE + CELL_SIZE / 2, p.y * CELL_SIZE + CELL_SIZE / 2);
             }
             ctx.stroke();
             ctx.setLineDash([]);
+
+            ctx.fillStyle = 'rgba(255,255,255,0.45)';
+            ctx.beginPath();
+            ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+            ctx.fill();
+            for (const p of chef.path) {
+                const px = p.x * CELL_SIZE + CELL_SIZE / 2;
+                const py = p.y * CELL_SIZE + CELL_SIZE / 2;
+                ctx.beginPath();
+                ctx.arc(px, py, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            const last = chef.path[chef.path.length - 1];
+            const lx = last.x * CELL_SIZE;
+            const ly = last.y * CELL_SIZE;
+            const stationTint = pathPreviewTintForStation(getStationAt(last.x, last.y));
+            const tint = stationTint || 'rgba(255,255,255,0.85)';
+            ctx.strokeStyle = tint;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(lx + 6, ly + 6, CELL_SIZE - 12, CELL_SIZE - 12);
+            ctx.strokeStyle = tint;
+            ctx.beginPath();
+            ctx.moveTo(lx + CELL_SIZE / 2 - 8, ly + CELL_SIZE / 2);
+            ctx.lineTo(lx + CELL_SIZE / 2 + 8, ly + CELL_SIZE / 2);
+            ctx.moveTo(lx + CELL_SIZE / 2, ly + CELL_SIZE / 2 - 8);
+            ctx.lineTo(lx + CELL_SIZE / 2, ly + CELL_SIZE / 2 + 8);
+            ctx.stroke();
         }
     }
     
-    // Draw floating texts
     drawFloatingTexts();
     
-    // Draw labels
     drawLabels();
 }
 
@@ -1159,138 +1494,151 @@ function drawTile(x, y, type) {
 }
 
 function drawStations() {
-    // Draw ingredient bins
     for (const bin of stations.ingredientBins) {
         const px = bin.x * CELL_SIZE;
         const py = bin.y * CELL_SIZE;
-        
-        // Bin background
+        const pad = 4;
+        const emoji = INGREDIENT_BIN_EMOJI[bin.ingredient] || '📦';
+
         ctx.fillStyle = COLORS.ingredientBin;
-        ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-        
-        // Draw ingredient color
-        ctx.fillStyle = COLORS[bin.ingredient] || '#fff';
-        ctx.fillRect(px + 8, py + 8, CELL_SIZE - 16, CELL_SIZE - 16);
-        
-        // Border
-        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-        
-        // Label
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 12px Arial';
+        ctx.beginPath();
+        ctx.roundRect(px + pad, py + pad, CELL_SIZE - pad * 2, CELL_SIZE - pad * 2, 6);
+        ctx.fill();
+
+        /* Full inner square (same inset on all sides — was CELL_SIZE-22 height, which left a brown band) */
+        const innerInset = 8;
+        const innerSize = CELL_SIZE - innerInset * 2;
+        const innerFill =
+            bin.ingredient === 'meat'
+                ? '#8d6e63'
+                : COLORS[bin.ingredient] || '#fff';
+        ctx.fillStyle = innerFill;
+        ctx.beginPath();
+        ctx.roundRect(px + innerInset, py + innerInset, innerSize, innerSize, 4);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(px + pad, py + pad, CELL_SIZE - pad * 2, CELL_SIZE - pad * 2, 6);
+        ctx.stroke();
+
+        ctx.font = '22px system-ui, "Segoe UI", sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(bin.ingredient.substring(0, 3).toUpperCase(), px + CELL_SIZE/2, py + CELL_SIZE - 8);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(emoji, px + CELL_SIZE / 2, py + CELL_SIZE / 2 + 2);
     }
-    
-    // Draw stoves with cooking indicators
+
     for (const stove of stations.stoves) {
         const px = stove.x * CELL_SIZE;
         const py = stove.y * CELL_SIZE;
-        
-        // Stove base
+
         ctx.fillStyle = stove.cooking ? COLORS.stoveOn : COLORS.stove;
         ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-        
-        // Burner rings
+
         ctx.strokeStyle = stove.cooking ? '#ffeb3b' : '#666';
         ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.arc(px + CELL_SIZE/2, py + CELL_SIZE/2, 12, 0, Math.PI * 2);
+        ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 12, 0, Math.PI * 2);
         ctx.stroke();
-        
+
         if (stove.cooking) {
-            // Flame animation
             const flicker = Math.sin(Date.now() / 100) * 2;
             ctx.fillStyle = '#ff9800';
             ctx.beginPath();
-            ctx.arc(px + CELL_SIZE/2, py + CELL_SIZE/2 + flicker, 8, 0, Math.PI * 2);
+            ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2 + flicker, 8, 0, Math.PI * 2);
             ctx.fill();
-            
-            // Cooking item
+
+            const progress = Math.min(1.5, stove.cookTime / stove.maxCookTime);
+            ctx.fillStyle = 'rgba(255, 152, 0, 0.42)';
+            ctx.beginPath();
+            ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 16, 0, Math.PI * 2);
+            ctx.fill();
+
             ctx.fillStyle = COLORS[stove.cooking.ingredient] || '#fff';
             ctx.fillRect(px + 14, py + 14, CELL_SIZE - 28, CELL_SIZE - 28);
-            
-            // Progress bar
-            const progress = Math.min(1.5, stove.cookTime / stove.maxCookTime);
+
             let barColor;
-            if (progress >= 1.2) barColor = '#f44336'; // Burning!
-            else if (progress >= 0.8) barColor = '#4caf50'; // Ready!
-            else barColor = '#ffeb3b'; // Cooking
-            
-            ctx.fillStyle = '#333';
-            ctx.fillRect(px + 4, py + CELL_SIZE - 10, CELL_SIZE - 8, 6);
-            ctx.fillStyle = barColor;
-            ctx.fillRect(px + 4, py + CELL_SIZE - 10, (CELL_SIZE - 8) * Math.min(1, progress), 6);
-            
-            // Status text
+            if (progress >= 1.2) barColor = '#f44336';
+            else if (progress >= 0.8) barColor = '#4caf50';
+            else barColor = '#ffeb3b';
+
+            const barY = py + CELL_SIZE - 12;
+            const barW = CELL_SIZE - 8;
+            drawRoundedHBar(px + 4, barY, barW, 8, Math.min(1, progress), barColor, '#333');
+
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            ctx.font = 'bold 13px system-ui, "Segoe UI", sans-serif';
             if (progress >= 1.2) {
+                ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                ctx.fillText('BURNING!', px + CELL_SIZE / 2 + 1, py - 2 + 1);
                 ctx.fillStyle = '#f44336';
-                ctx.font = 'bold 10px Arial';
-                ctx.fillText('BURNING!', px + CELL_SIZE/2, py - 5);
+                ctx.fillText('BURNING!', px + CELL_SIZE / 2, py - 3);
             } else if (progress >= 0.8) {
+                ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                ctx.fillText('READY!', px + CELL_SIZE / 2 + 1, py - 2 + 1);
                 ctx.fillStyle = '#4caf50';
-                ctx.font = 'bold 10px Arial';
-                ctx.fillText('READY!', px + CELL_SIZE/2, py - 5);
+                ctx.fillText('READY!', px + CELL_SIZE / 2, py - 3);
             }
         }
-        
-        // Border
+
         ctx.strokeStyle = 'rgba(255,255,255,0.3)';
         ctx.lineWidth = 2;
         ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
     }
 
-    // Draw dish racks (stack of clean plates)
     for (const rack of stations.dishRacks) {
         const px = rack.x * CELL_SIZE;
         const py = rack.y * CELL_SIZE;
 
-        // Rack base
         ctx.fillStyle = '#8d6e63';
         ctx.fillRect(px + 4, py + 4, CELL_SIZE - 8, CELL_SIZE - 8);
 
-        // Plate icon and counts
-        ctx.fillStyle = '#fff';
-        ctx.beginPath();
-        ctx.arc(px + CELL_SIZE/2, py + CELL_SIZE/2 - 4, 8, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#333';
-        ctx.font = '12px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(String(rack.count), px + CELL_SIZE/2, py + CELL_SIZE/2 + 14);
+        for (let s = 0; s < 3; s++) {
+            const oy = s * 2.5;
+            ctx.fillStyle = '#eceff1';
+            ctx.beginPath();
+            ctx.arc(px + CELL_SIZE / 2 - 4, py + CELL_SIZE / 2 - 2 - oy, 6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#cfd8dc';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
 
-        // Dirty pile indicator
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 16px system-ui, "Segoe UI", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(rack.count), px + CELL_SIZE / 2 + 14, py + CELL_SIZE / 2 - 2);
+
         const dirty = rack.dirty || 0;
         if (dirty > 0) {
-            ctx.fillStyle = '#ff7043';
-            ctx.beginPath();
-            ctx.arc(px + CELL_SIZE - 10, py + 10, 6, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#fff';
-            ctx.font = '10px Arial';
-            ctx.fillText(String(dirty), px + CELL_SIZE - 10, py + 14);
+            ctx.fillStyle = 'rgba(62, 39, 35, 0.95)';
+            ctx.fillRect(px + 4, py + 4, 22, 16);
+            ctx.strokeStyle = '#ffab91';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(px + 4, py + 4, 22, 16);
+            ctx.fillStyle = '#ffccbc';
+            ctx.font = 'bold 11px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(String(dirty), px + 15, py + 12);
         }
 
         ctx.strokeStyle = 'rgba(255,255,255,0.25)';
         ctx.lineWidth = 1.5;
         ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
     }
-    
-    // counters are rendered on top (see drawCounters)
-    
-    // Draw cutting boards
+
     for (const board of stations.cuttingBoards) {
         const px = board.x * CELL_SIZE;
         const py = board.y * CELL_SIZE;
-        
-        // Board
+
         ctx.fillStyle = COLORS.cuttingBoard;
         ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-        
-        // Wood grain lines
+
         ctx.strokeStyle = 'rgba(0,0,0,0.2)';
         ctx.lineWidth = 1;
         for (let i = 0; i < 3; i++) {
@@ -1299,48 +1647,40 @@ function drawStations() {
             ctx.lineTo(px + CELL_SIZE - 8, py + 12 + i * 10);
             ctx.stroke();
         }
-        
+
         if (board.processing) {
             ctx.fillStyle = COLORS[board.processing.ingredient] || '#fff';
             ctx.fillRect(px + 12, py + 12, CELL_SIZE - 24, CELL_SIZE - 24);
-            
-            // Chopping progress
+
             const progress = board.processTime / board.maxProcessTime;
-            ctx.fillStyle = '#333';
-            ctx.fillRect(px + 4, py + CELL_SIZE - 10, CELL_SIZE - 8, 6);
-            ctx.fillStyle = '#4caf50';
-            ctx.fillRect(px + 4, py + CELL_SIZE - 10, (CELL_SIZE - 8) * progress, 6);
-            
-            // Knife animation
-            const knifeX = px + 10 + (CELL_SIZE - 20) * progress;
+            const barY = py + CELL_SIZE - 12;
+            drawRoundedHBar(px + 4, barY, CELL_SIZE - 8, 8, progress, '#4caf50', '#333');
+
+            const knifeX = px + 10 + (CELL_SIZE - 22) * progress;
             ctx.fillStyle = '#bdbdbd';
-            ctx.fillRect(knifeX, py + 8, 4, 16);
+            ctx.fillRect(knifeX, py + 7, 5, 18);
         }
-        
+
         ctx.strokeStyle = 'rgba(255,255,255,0.3)';
         ctx.lineWidth = 2;
         ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
     }
-    
-    // Draw plating areas
+
     for (const plate of stations.platingAreas) {
         const px = plate.x * CELL_SIZE;
         const py = plate.y * CELL_SIZE;
-        
-        // Counter
+
         ctx.fillStyle = COLORS.platingArea;
         ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-        
-        // Plate circle
+
         ctx.fillStyle = '#fff';
         ctx.beginPath();
-        ctx.arc(px + CELL_SIZE/2, py + CELL_SIZE/2, 14, 0, Math.PI * 2);
+        ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 16, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = '#ddd';
         ctx.lineWidth = 2;
         ctx.stroke();
-        
-        // Determine items to render: plating area may hold ingredients or a plate item
+
         let plateItems = [];
         if (plate.items.length === 1 && plate.items[0].type === 'plate') {
             plateItems = plate.items[0].items;
@@ -1348,87 +1688,139 @@ function drawStations() {
             plateItems = plate.items;
         }
 
-        // Items on plate (or on plating area that will become a plate)
         if (plateItems.length > 0) {
             const angleStep = (Math.PI * 2) / plateItems.length;
             plateItems.forEach((item, i) => {
-                const angle = i * angleStep - Math.PI/2;
-                const ix = px + CELL_SIZE/2 + Math.cos(angle) * 6;
-                const iy = py + CELL_SIZE/2 + Math.sin(angle) * 6;
+                const angle = i * angleStep - Math.PI / 2;
+                const ix = px + CELL_SIZE / 2 + Math.cos(angle) * 7;
+                const iy = py + CELL_SIZE / 2 + Math.sin(angle) * 7;
                 ctx.fillStyle = COLORS[item.ingredient] || '#888';
                 ctx.beginPath();
                 ctx.arc(ix, iy, 5, 0, Math.PI * 2);
                 ctx.fill();
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
             });
 
-            // Item count
             ctx.fillStyle = '#fff';
-            ctx.font = 'bold 12px Arial';
+            ctx.font = 'bold 12px system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.fillText(plateItems.length.toString(), px + CELL_SIZE - 10, py + 14);
         }
-        
+
         ctx.strokeStyle = 'rgba(255,255,255,0.3)';
         ctx.lineWidth = 2;
         ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
     }
-    
-    // Draw reception stands
-    for (const stand of stations.receptionStands) {
+
+    for (const sink of stations.sinks) {
+        const px = sink.x * CELL_SIZE;
+        const py = sink.y * CELL_SIZE;
+        ctx.fillStyle = '#90a4ae';
+        ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+        ctx.fillStyle = 'rgba(100, 181, 246, 0.35)';
+        ctx.beginPath();
+        ctx.roundRect(px + 8, py + 8, CELL_SIZE - 16, CELL_SIZE - 16, 8);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(px + 8, py + 8, CELL_SIZE - 16, CELL_SIZE - 16, 8);
+        ctx.stroke();
+        ctx.font = '22px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('💧', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+    }
+
+    for (const trash of stations.trashCans) {
+        const px = trash.x * CELL_SIZE;
+        const py = trash.y * CELL_SIZE;
+        ctx.fillStyle = '#263238';
+        ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+        ctx.font = '24px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('🗑️', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+    }
+
+    for (let si = 0; si < stations.receptionStands.length; si++) {
+        const stand = stations.receptionStands[si];
         const px = stand.x * CELL_SIZE;
         const py = stand.y * CELL_SIZE;
-        
-        // Stand
+        const standNum = si + 1;
+
         ctx.fillStyle = COLORS.receptionStand;
         ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-        
+
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(px + 5, py + 5, 16, 13);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 10px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(standNum), px + 13, py + 12);
+
         if (stand.order) {
             const urgency = stand.order.timeLeft / stand.order.maxTime;
-            
-            // Order indicator with urgency color
+
+            if (urgency < 0.25) {
+                ctx.shadowColor = 'rgba(244, 67, 54, 0.65)';
+                ctx.shadowBlur = 12 + Math.sin(Date.now() / 120) * 4;
+            }
+
             ctx.fillStyle = urgency < 0.25 ? '#f44336' : (urgency < 0.5 ? '#ff9800' : '#4caf50');
             ctx.beginPath();
-            ctx.arc(px + CELL_SIZE/2, py + CELL_SIZE/2, 14, 0, Math.PI * 2);
+            ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 18, 0, Math.PI * 2);
             ctx.fill();
-            
-            // Dish emoji
-            ctx.font = '16px Arial';
+            ctx.shadowBlur = 0;
+
+            ctx.font = '18px system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText(stand.order.emoji || '🍽️', px + CELL_SIZE/2, py + CELL_SIZE/2);
-            
-            // Timer arc
+            ctx.fillStyle = '#fff';
+            ctx.fillText(stand.order.emoji || '🍽️', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 3;
             ctx.beginPath();
-            ctx.arc(px + CELL_SIZE/2, py + CELL_SIZE/2, 18, -Math.PI/2, -Math.PI/2 + (Math.PI * 2 * urgency));
+            ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 23, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * urgency));
             ctx.stroke();
-            
-            // Pulsing for urgent
+
             if (urgency < 0.25) {
-                ctx.strokeStyle = `rgba(244, 67, 54, ${0.5 + Math.sin(Date.now() / 100) * 0.5})`;
-                ctx.lineWidth = 4;
-                ctx.strokeRect(px, py, CELL_SIZE, CELL_SIZE);
+                ctx.strokeStyle = `rgba(244, 67, 54, ${0.45 + Math.sin(Date.now() / 100) * 0.45})`;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
             }
-        } else if (stand.hasDirtyDish) {
-            // Dirty dish indicator
-            ctx.fillStyle = '#fff';
-            ctx.beginPath();
-            ctx.arc(px + CELL_SIZE/2, py + CELL_SIZE/2, 14, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#6d4c41';
-            ctx.beginPath();
-            ctx.arc(px + CELL_SIZE/2, py + CELL_SIZE/2, 8, 0, Math.PI * 2);
-            ctx.fill();
-        } else {
-            // Empty stand indicator
-            ctx.fillStyle = 'rgba(255,255,255,0.2)';
-            ctx.font = '20px Arial';
+        } else if (stand.customer) {
+            ctx.font = 'bold 22px system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('?', px + CELL_SIZE/2, py + CELL_SIZE/2);
+            ctx.fillStyle = '#a5d6a7';
+            ctx.fillText('✓', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+        } else if (stand.hasDirtyDish) {
+            ctx.fillStyle = '#efebe9';
+            ctx.beginPath();
+            ctx.ellipse(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 14, 10, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#5d4037';
+            ctx.beginPath();
+            ctx.ellipse(px + CELL_SIZE / 2, py + CELL_SIZE / 2 + 1, 11, 7, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#3e2723';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.ellipse(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 14, 10, 0, 0, Math.PI * 2);
+            ctx.stroke();
+        } else {
+            ctx.fillStyle = 'rgba(255,255,255,0.2)';
+            ctx.font = '20px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('?', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
         }
-        
+
         ctx.strokeStyle = 'rgba(255,255,255,0.3)';
         ctx.lineWidth = 2;
         ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
@@ -1441,46 +1833,42 @@ function drawCounters() {
         const px = counter.x * CELL_SIZE;
         const py = counter.y * CELL_SIZE;
 
-        // Counter surface
         ctx.fillStyle = COLORS.counter;
         ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
 
-        // If an item is present, draw it clearly on top
+        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, 1);
+
         if (counter.items && counter.items.length > 0) {
             const top = counter.items[counter.items.length - 1];
-            // small highlight behind item
             ctx.fillStyle = 'rgba(255,255,255,0.04)';
             ctx.fillRect(px + 6, py + 6, CELL_SIZE - 12, CELL_SIZE - 12);
 
             if (top.type === 'plate') {
                 ctx.fillStyle = '#fff';
                 ctx.beginPath();
-                ctx.arc(px + CELL_SIZE/2, py + CELL_SIZE/2, 10, 0, Math.PI * 2);
+                ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 10, 0, Math.PI * 2);
                 ctx.fill();
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
                 ctx.fillStyle = '#333';
-                ctx.font = 'bold 10px Arial';
+                ctx.font = 'bold 10px system-ui, sans-serif';
                 ctx.textAlign = 'center';
-                ctx.fillText(String(top.items.length), px + CELL_SIZE - 12, py + 14);
+                ctx.textBaseline = 'middle';
+                ctx.fillText(String(top.items.length), px + CELL_SIZE / 2, py + CELL_SIZE / 2);
             } else {
                 ctx.fillStyle = COLORS[top.ingredient] || '#ccc';
                 ctx.beginPath();
-                ctx.arc(px + CELL_SIZE/2, py + CELL_SIZE/2, 8, 0, Math.PI * 2);
+                ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 8, 0, Math.PI * 2);
                 ctx.fill();
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
             }
         } else {
-            // subtle empty counter highlight
             ctx.fillStyle = 'rgba(255,255,255,0.01)';
             ctx.fillRect(px + 2, py + CELL_SIZE - 8, CELL_SIZE - 4, 4);
-        }
-
-        // Full indicator if occupied
-        if (counter.items && counter.items.length >= 1) {
-            ctx.fillStyle = 'rgba(0,0,0,0.4)';
-            ctx.fillRect(px + CELL_SIZE - 28, py + 4, 24, 14);
-            ctx.fillStyle = '#ffb74d';
-            ctx.font = '10px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('FULL', px + CELL_SIZE - 16, py + 14);
         }
 
         ctx.strokeStyle = 'rgba(255,255,255,0.08)';
@@ -1492,116 +1880,220 @@ function drawCounters() {
 function drawChef(chef) {
     const px = chef.x * CELL_SIZE;
     const py = chef.y * CELL_SIZE;
-    
-    // Shadow
+    const cx = px + CELL_SIZE / 2;
+    const cy = py + CELL_SIZE / 2;
+
+    let nx = 0;
+    let ny = 0;
+    if (chef.path.length > 0) {
+        nx = chef.path[0].x - chef.x;
+        ny = chef.path[0].y - chef.y;
+    }
+    const len = Math.sqrt(nx * nx + ny * ny) || 1;
+    nx /= len;
+    ny /= len;
+
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.beginPath();
-    ctx.ellipse(px + CELL_SIZE/2, py + CELL_SIZE - 6, 14, 6, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, py + CELL_SIZE - 5, 16, 7, 0, 0, Math.PI * 2);
     ctx.fill();
-    
-    // Chef body
-    ctx.fillStyle = COLORS.chef[chef.id];
-    ctx.beginPath();
-    ctx.roundRect(px + 6, py + 8, CELL_SIZE - 12, CELL_SIZE - 14, 6);
-    ctx.fill();
-    
-    // Chef hat
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(px + 12, py + 2, CELL_SIZE - 24, 10);
-    ctx.fillRect(px + 10, py + 8, CELL_SIZE - 20, 4);
-    
-    // Selection indicator
-    if (GameState.selectedChef === chef.id) {
-        ctx.strokeStyle = COLORS.chefSelected;
-        ctx.lineWidth = 3;
-        ctx.setLineDash([4, 4]);
-        ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-        ctx.setLineDash([]);
-        
-        // Selection glow
-        ctx.shadowColor = '#fff';
-        ctx.shadowBlur = 10;
-        ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-        ctx.shadowBlur = 0;
-    }
-    
-    // Chef number
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 16px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText((chef.id + 1).toString(), px + CELL_SIZE/2, py + CELL_SIZE/2 + 4);
-    
-    // Held item indicator
-    if (chef.holding) {
-        const itemX = px + CELL_SIZE - 8;
-        const itemY = py + 4;
-        
-        ctx.fillStyle = '#333';
-        ctx.beginPath();
-        ctx.arc(itemX, itemY + 6, 10, 0, Math.PI * 2);
-        ctx.fill();
-        
-        if (chef.holding.type === 'plate') {
-            ctx.fillStyle = '#fff';
-            ctx.beginPath();
-            ctx.arc(itemX, itemY + 6, 7, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#4caf50';
-            ctx.font = '10px Arial';
-            ctx.fillText(chef.holding.items.length.toString(), itemX, itemY + 9);
-        } else {
-            ctx.fillStyle = COLORS[chef.holding.ingredient];
-            ctx.beginPath();
-            ctx.arc(itemX, itemY + 6, 6, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // State indicator
-            if (chef.holding.state === INGREDIENT_STATES.CHOPPED) {
-                ctx.strokeStyle = '#4caf50';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-            } else if (chef.holding.state === INGREDIENT_STATES.COOKED) {
-                ctx.strokeStyle = '#ff9800';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-            } else if (chef.holding.state === INGREDIENT_STATES.BURNT) {
-                ctx.strokeStyle = '#f44336';
-                ctx.lineWidth = 2;
+
+    if (chef.boostActive) {
+        if (nx !== 0 || ny !== 0) {
+            const bx = -nx;
+            const by = -ny;
+            ctx.strokeStyle = 'rgba(255, 215, 0, 0.6)';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 3; i++) {
+                const side = (i - 1) * 2.5;
+                const ox = bx * (10 + i * 6) + (-ny) * side;
+                const oy = by * (10 + i * 6) + nx * side;
+                ctx.beginPath();
+                ctx.moveTo(cx + ox * 0.35, cy + oy * 0.35);
+                ctx.lineTo(cx + ox, cy + oy);
                 ctx.stroke();
             }
         }
+        ctx.strokeStyle = 'rgba(255, 213, 79, 0.9)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(px + 4, py + 8, CELL_SIZE - 8, CELL_SIZE - 14, 7);
+        ctx.stroke();
     }
-    
-    // Busy indicator (working animation)
+
+    ctx.fillStyle = COLORS.chef[chef.id];
+    ctx.beginPath();
+    ctx.roundRect(px + 5, py + 10, CELL_SIZE - 10, CELL_SIZE - 16, 7);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(px + 11, py + 11, CELL_SIZE - 22, 10);
+
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(px + 12, py + 4, CELL_SIZE - 24, 10);
+    ctx.fillRect(px + 10, py + 10, CELL_SIZE - 20, 4);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 17px system-ui, "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText((chef.id + 1).toString(), cx, cy + 3);
+
+    if (chef.holding) {
+        const bx = px + CELL_SIZE - 4;
+        const by = py + CELL_SIZE + 2;
+        const r = 7;
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#fff';
+        if (chef.holding.type === 'plate') {
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(bx, by, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = '#263238';
+            ctx.font = 'bold 10px system-ui, sans-serif';
+            ctx.fillText(String(chef.holding.items.length), bx, by);
+        } else {
+            ctx.fillStyle = COLORS[chef.holding.ingredient] || '#ccc';
+            ctx.beginPath();
+            ctx.arc(bx, by, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.font = 'bold 8px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            if (chef.holding.state === INGREDIENT_STATES.CHOPPED) {
+                ctx.fillStyle = '#2e7d32';
+                ctx.fillText('✓', bx + 5, by - 5);
+            } else if (chef.holding.state === INGREDIENT_STATES.COOKED) {
+                ctx.fillStyle = '#e65100';
+                ctx.fillText('✓', bx + 5, by - 5);
+            } else if (chef.holding.state === INGREDIENT_STATES.BURNT) {
+                ctx.fillStyle = '#c62828';
+                ctx.fillText('✗', bx + 5, by - 5);
+            }
+        }
+    }
+
+    if (chef.path.length > 0 && (nx !== 0 || ny !== 0)) {
+        const tipX = cx + nx * 17;
+        const tipY = cy + ny * 17;
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.beginPath();
+        ctx.moveTo(tipX + nx * 7, tipY + ny * 7);
+        ctx.lineTo(tipX - nx * 4 - ny * 5, tipY - ny * 4 + nx * 5);
+        ctx.lineTo(tipX - nx * 4 + ny * 5, tipY - ny * 4 - nx * 5);
+        ctx.closePath();
+        ctx.fill();
+    }
+
     if (chef.busy) {
         ctx.fillStyle = '#ffeb3b';
-        const bounce = Math.sin(Date.now() / 150) * 3;
-        ctx.font = '14px Arial';
-        ctx.fillText('⚡', px + 8, py + bounce);
+        ctx.font = '16px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('⚡', cx, py + 6);
+    }
+
+    if (GameState.selectedChef === chef.id) {
+        const pulse = 2.5 + Math.sin(Date.now() / 200) * 0.9;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = pulse;
+        ctx.setLineDash([]);
+        ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+        if (Math.floor(Date.now() / 120) % 2 === 0) {
+            ctx.save();
+            ctx.shadowColor = 'rgba(255,255,255,0.65)';
+            ctx.shadowBlur = 16;
+            ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+            ctx.restore();
+        }
     }
 }
 
 function drawLabels() {
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.font = '12px Arial';
+    const h = MAP_HEIGHT * CELL_SIZE;
+    const bannerH = 22;
+    const y0 = h - bannerH;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(0, y0, 13 * CELL_SIZE, bannerH);
+    ctx.fillRect(14 * CELL_SIZE, y0, 6 * CELL_SIZE, bannerH);
+
+    ctx.fillStyle = 'rgba(200, 210, 220, 0.88)';
+    ctx.font = '14px system-ui, "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
-    
-    // Kitchen label
-    ctx.fillText('🍳 KITCHEN', 6 * CELL_SIZE, MAP_HEIGHT * CELL_SIZE - 8);
-    
-    // Service label
-    ctx.fillText('🧑‍🍳 SERVICE', 16 * CELL_SIZE, MAP_HEIGHT * CELL_SIZE - 8);
+    ctx.textBaseline = 'middle';
+    ctx.fillText('KITCHEN', 6.5 * CELL_SIZE, y0 + bannerH / 2);
+    ctx.fillText('SERVICE', 16.5 * CELL_SIZE, y0 + bannerH / 2);
 }
 
 // =============================================
 // UI UPDATES
 // =============================================
+let lastDisplayedStreak = 0;
+
 function updateUI() {
     document.getElementById('score').textContent = Math.floor(GameState.score);
     document.getElementById('time').textContent = formatTime(GameState.time);
-    document.getElementById('difficulty').textContent = GameState.difficulty.toFixed(1) + 'x';
-    document.getElementById('streak').textContent = `${GameState.streak} (x${(1 + Math.min(1.0, GameState.streak * 0.05)).toFixed(2)})`;
+
+    const apiPhase = getApiPhase(GameState.time);
+    const phaseLabels = {
+        tutorial: 'Tutorial',
+        ramp: 'Ramp',
+        automation: 'Automation Required',
+        endurance: 'Endurance'
+    };
+    const phaseEl = document.getElementById('phase');
+    if (phaseEl) {
+        phaseEl.textContent = phaseLabels[apiPhase];
+        phaseEl.className = 'phase-value phase-' + apiPhase;
+    }
+
+    document.getElementById('difficulty').textContent =
+        `${GameState.difficulty.toFixed(1)}x · ${phaseLabels[apiPhase]} | ❌ ${GameState.failedOrders}/${GameState.maxFailedOrders}`;
+
+    const endBanner = document.getElementById('endurance-banner');
+    if (endBanner) {
+        endBanner.classList.toggle('visible', GameState.time >= 600);
+    }
+
+    const statDel = document.getElementById('stat-delivered');
+    if (statDel) {
+        statDel.textContent = String(GameState.ordersDelivered);
+        const sf = document.getElementById('stat-failed');
+        if (sf) sf.textContent = String(GameState.failedOrders);
+        const sa = document.getElementById('stat-active');
+        if (sa) sa.textContent = String(orders.length);
+    } else {
+        const ordersStats = document.getElementById('orders-stats');
+        if (ordersStats && !document.getElementById('stat-delivered')) {
+            const total = GameState.ordersDelivered + GameState.failedOrders + orders.length;
+            ordersStats.textContent =
+                `Total orders: ${total} (${GameState.ordersDelivered} delivered · ${GameState.failedOrders} failed · ${orders.length} active)`;
+        }
+    }
+
+    const multVal = (1 + Math.min(1.0, GameState.streak * 0.05)).toFixed(2);
+    const streakMultEl = document.getElementById('streak-mult');
+    const streakNumEl = document.getElementById('streak');
+    if (streakMultEl) {
+        streakNumEl.textContent = String(GameState.streak);
+        streakMultEl.textContent = GameState.streak > 0 ? `×${multVal}` : '';
+    } else {
+        streakNumEl.textContent = `${GameState.streak} (x${multVal})`;
+    }
+
+    if (GameState.streak > lastDisplayedStreak) {
+        const row = document.getElementById('streak-display');
+        if (row) {
+            row.classList.add('streak-bump');
+            setTimeout(() => row.classList.remove('streak-bump'), 450);
+        }
+    }
+    lastDisplayedStreak = GameState.streak;
+
     const rushDisplay = document.getElementById('rush');
     const rushPill = document.getElementById('rush-display');
     rushDisplay.textContent = GameState.rush.active ? `LIVE ${Math.ceil(GameState.rush.timeLeft)}s` : `Idle ${Math.ceil(GameState.rush.cooldown)}s`;
@@ -1610,16 +2102,15 @@ function updateUI() {
     } else {
         rushPill.classList.remove('hot');
     }
-    
-    // Update selected chef info
+
     if (GameState.selectedChef !== null) {
         const chef = chefs[GameState.selectedChef];
         document.getElementById('chef-info').textContent = `Chef ${chef.id + 1} (${chef.name})`;
-        
+
         if (chef.holding) {
             if (chef.holding.type === 'plate') {
                 const items = chef.holding.items.map(i => i.ingredient).join(', ');
-                document.getElementById('item-info').textContent = `🍽️ Plate: ${items}`;
+                document.getElementById('item-info').textContent = `🍽️ ${items}`;
             } else {
                 const stateEmoji = {
                     raw: '🥬',
@@ -1627,7 +2118,7 @@ function updateUI() {
                     cooked: '🔥',
                     burnt: '💨'
                 };
-                document.getElementById('item-info').textContent = 
+                document.getElementById('item-info').textContent =
                     `${stateEmoji[chef.holding.state]} ${chef.holding.state} ${chef.holding.ingredient}`;
             }
         } else {
@@ -1637,86 +2128,93 @@ function updateUI() {
         if (chef.boostActive) {
             document.getElementById('boost-info').textContent = `Active ${Math.ceil(chef.boostTime)}s`;
         } else if (chef.boostCooldown > 0) {
-            document.getElementById('boost-info').textContent = `Cooldown ${Math.ceil(chef.boostCooldown)}s`;
+            document.getElementById('boost-info').textContent = `CD ${Math.ceil(chef.boostCooldown)}s`;
         } else {
             document.getElementById('boost-info').textContent = 'Ready';
         }
     } else {
         document.getElementById('chef-info').textContent = 'Click a chef to select';
-        document.getElementById('item-info').textContent = '-';
-        document.getElementById('boost-info').textContent = '-';
+        document.getElementById('item-info').textContent = '—';
+        document.getElementById('boost-info').textContent = '—';
     }
-    
-    // Update orders panel
+
+    const chefChrome = document.querySelector('.ui-chef-compact');
+    if (chefChrome) {
+        chefChrome.classList.toggle('chef-selected', GameState.selectedChef !== null);
+    }
+
     const ordersList = document.getElementById('orders-list');
     ordersList.innerHTML = '';
-    
+
     if (orders.length === 0) {
-        ordersList.innerHTML = '<div style="color: #888; text-align: center; padding: 20px;">No orders yet...</div>';
+        ordersList.innerHTML = '<div class="orders-empty">No orders yet…</div>';
     }
-    
+
     for (const order of orders) {
         const card = document.createElement('div');
-        const urgencyClass = order.timeLeft < order.maxTime * 0.25 ? ' urgent' : '';
-        const vipClass = order.vip ? ' vip' : '';
-        card.className = 'order-card' + urgencyClass + vipClass;
-        
         const urgency = order.timeLeft / order.maxTime;
-        const components = order.recipe.components.map(c => 
-            `${c.state} ${c.ingredient}`
-        ).join(', ');
-        
-        card.innerHTML = `
-            <div class="order-dish">${order.emoji} ${order.dish}${order.vip ? ' ⭐ VIP' : ''}</div>
-            <div class="order-components">${components}</div>
-            <div class="order-time">${Math.ceil(order.timeLeft)}s remaining</div>
-            <div class="order-timer">
-                <div class="order-timer-fill ${urgency < 0.25 ? 'urgent' : ''}" 
-                     style="width: ${urgency * 100}%"></div>
-            </div>
-        `;
-        
+        const urgent = order.timeLeft < order.maxTime * 0.25;
+        card.className = 'order-card' + (urgent ? ' urgent' : '') + (order.vip ? ' vip' : '');
+
+        const top = document.createElement('div');
+        top.className = 'order-card-top';
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'order-title-wrap';
+        const emojiSpan = document.createElement('span');
+        emojiSpan.className = 'order-emoji';
+        emojiSpan.textContent = order.emoji || '🍽️';
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'order-name';
+        nameSpan.textContent = order.dish + (order.vip ? ' ' : '');
+        titleWrap.appendChild(emojiSpan);
+        titleWrap.appendChild(nameSpan);
+        if (order.vip) {
+            const vip = document.createElement('span');
+            vip.className = 'vip-star';
+            vip.textContent = '⭐';
+            titleWrap.appendChild(vip);
+        }
+        const standBadge = document.createElement('span');
+        standBadge.className = 'order-stand';
+        standBadge.textContent = 'Stand ' + standNumberFromStandId(order.standId);
+        top.appendChild(titleWrap);
+        top.appendChild(standBadge);
+        card.appendChild(top);
+
+        const chips = document.createElement('div');
+        chips.className = 'order-chips';
+        for (const c of order.recipe.components) {
+            const chip = document.createElement('span');
+            const processed = c.state === 'chopped' || c.state === 'cooked' || c.state === 'burnt';
+            chip.className = 'order-chip' + (processed ? ' chip-processed' : ' chip-raw');
+            const em = INGREDIENT_BIN_EMOJI[c.ingredient] || '•';
+            chip.textContent = `${em} ${c.state}`;
+            chips.appendChild(chip);
+        }
+        card.appendChild(chips);
+
+        const timeRow = document.createElement('div');
+        timeRow.className = 'order-time-large';
+        timeRow.textContent = `${Math.ceil(order.timeLeft)}s left`;
+        card.appendChild(timeRow);
+
+        const timer = document.createElement('div');
+        timer.className = 'order-timer';
+        const fill = document.createElement('div');
+        fill.className = 'order-timer-fill' + (urgent ? ' urgent' : '');
+        fill.style.width = `${urgency * 100}%`;
+        let barGrad;
+        if (urgency > 0.75) barGrad = 'linear-gradient(90deg, #66bb6a, #43a047)';
+        else if (urgency > 0.5) barGrad = 'linear-gradient(90deg, #ffee58, #fbc02d)';
+        else if (urgency > 0.25) barGrad = 'linear-gradient(90deg, #ffb74d, #f57c00)';
+        else barGrad = 'linear-gradient(90deg, #ef5350, #b71c1c)';
+        fill.style.background = barGrad;
+        timer.appendChild(fill);
+        card.appendChild(timer);
+
         ordersList.appendChild(card);
     }
-    
-    // Update failed orders (augment difficulty line)
-    document.getElementById('difficulty').textContent = 
-        `${GameState.difficulty.toFixed(1)}x | ❌ ${GameState.failedOrders}/${GameState.maxFailedOrders}`;
 }
-
-// =============================================
-// RULES / RESTRICTIONS UI
-// =============================================
-const RESTRICTIONS_UI = [
-    'No slicing bread — don\'t chop Dough (🍞).',
-    'No serving raw meat — cook meat before plating (🥩).',
-    'Be nice to stoves — no surfing on burners (😅).'
-];
-
-function initRulesUI() {
-    const list = document.getElementById('rules-list');
-    if (!list) return; // graceful if DOM not present
-
-    list.innerHTML = '';
-    RESTRICTIONS_UI.forEach(r => {
-        const li = document.createElement('li');
-        li.textContent = r;
-        list.appendChild(li);
-    });
-
-    const toggle = document.getElementById('rules-toggle');
-    const panel = document.getElementById('rules-panel');
-    if (toggle && panel) {
-        toggle.addEventListener('click', () => {
-            const hidden = panel.classList.contains('hidden');
-            panel.classList.toggle('hidden');
-            toggle.textContent = hidden ? 'Hide Rules' : 'Show Rules';
-        });
-    }
-}
-
-// Initialize rules UI right away (script is loaded at end of body)
-try { initRulesUI(); } catch (e) { /* ignore in test env */ }
 
 function formatTime(seconds) {
     const mins = Math.floor(seconds / 60);
@@ -1751,16 +2249,19 @@ canvas.addEventListener('click', (e) => {
         const stationInfo = getStationAt(x, y);
         
         if (stationInfo) {
-            // Find walkable tile adjacent to station
+            const st = stationInfo.station;
             const adjacent = findAdjacentWalkable(x, y);
             if (adjacent) {
-                const path = findPath(chef.x, chef.y, adjacent.x, adjacent.y);
-                if (path.length > 0 || (chef.x === adjacent.x && chef.y === adjacent.y)) {
-                    chef.path = path;
-                    chef.targetStation = stationInfo;
-                } else if (chef.x === adjacent.x && chef.y === adjacent.y) {
-                    // Already adjacent, interact immediately
+                if (isChefAdjacentToStation(chef.x, chef.y, st.x, st.y)) {
+                    chef.path = [];
+                    chef.targetStation = null;
                     interactWithStation(chef, stationInfo);
+                } else {
+                    const path = findPath(chef.x, chef.y, adjacent.x, adjacent.y);
+                    if (path.length > 0) {
+                        chef.path = path;
+                        chef.targetStation = stationInfo;
+                    }
                 }
             }
         } else if (isWalkable(x, y)) {
@@ -1788,31 +2289,45 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-function activateBoost() {
-    if (GameState.selectedChef === null) return;
-    const chef = chefs[GameState.selectedChef];
-    if (!chef || chef.boostActive || chef.boostCooldown > 0) return;
-
+function tryBoostChef(chef) {
+    if (!chef || chef.boostActive || chef.boostCooldown > 0) {
+        return { success: false, error: 'Boost not available' };
+    }
     chef.boostActive = true;
     chef.boostTime = 3.5;
     chef.boostCooldown = 12;
     showFloatingText(chef.x, chef.y, '⚡ Boost!', '#ffd54f');
+    return { success: true };
+}
+
+function activateBoost() {
+    if (GameState.selectedChef === null) return;
+    const chef = chefs[GameState.selectedChef];
+    tryBoostChef(chef);
 }
 
 // =============================================
 // GAME CONTROL
 // =============================================
 function startGame() {
+    EventBus.clear();
     GameState.running = true;
     GameState.paused = false;
+    GameState.gameOver = false;
     GameState.time = 0;
     GameState.score = 0;
     GameState.difficulty = 1.0;
     GameState.streak = 0;
     GameState.bestStreak = 0;
     GameState.failedOrders = 0;
+    GameState.ordersDelivered = 0;
     GameState.selectedChef = null;
+    lastDisplayedStreak = 0;
     GameState.moveTimer = 0;
+    GameState.phaseBanner60 = false;
+    GameState.phaseBanner150 = false;
+    GameState.phaseBanner600Float = false;
+    lastEmittedPhase = getApiPhase(0);
     GameState.rush.active = false;
     GameState.rush.timeLeft = 0;
     GameState.rush.cooldown = 20;
@@ -1822,7 +2337,7 @@ function startGame() {
     stations.cuttingBoards.forEach(s => { s.processing = null; s.processTime = 0; s.busy = false; });
     stations.platingAreas.forEach(s => { s.items = []; s.busy = false; });
     stations.receptionStands.forEach(s => { s.order = null; s.customer = null; s.hasDirtyDish = false; });
-    stations.dishRacks.forEach(r => { r.count = r.maxCount || 8; r.dirty = 0; });
+    stations.dishRacks.forEach(r => { r.count = 5; r.dirty = 0; });
     
     orders.length = 0;
     orderIdCounter = 0;
@@ -1837,7 +2352,8 @@ function startGame() {
     document.getElementById('start-btn').disabled = true;
     document.getElementById('pause-btn').disabled = false;
     document.getElementById('game-over').classList.add('hidden');
-    
+    document.body.classList.add('game-running');
+
     lastTime = performance.now();
     requestAnimationFrame(gameLoop);
 }
@@ -1847,13 +2363,46 @@ function togglePause() {
     document.getElementById('pause-btn').textContent = GameState.paused ? 'Resume' : 'Pause';
 }
 
+function gradeFromScore(score) {
+    const s = Math.floor(score);
+    if (s < 0) return { letter: 'F', cls: 'grade-f' };
+    if (s < 500) return { letter: 'D', cls: 'grade-d' };
+    if (s < 2000) return { letter: 'C', cls: 'grade-c' };
+    if (s < 5000) return { letter: 'B', cls: 'grade-b' };
+    if (s < 10000) return { letter: 'A', cls: 'grade-a' };
+    return { letter: 'S', cls: 'grade-s' };
+}
+
 function endGame() {
     GameState.running = false;
+    GameState.gameOver = true;
+    EventBus.emit('gameOver', {
+        score: GameState.score,
+        time: GameState.time,
+        bestStreak: GameState.bestStreak
+    });
     document.getElementById('final-score').textContent = Math.floor(GameState.score);
     document.getElementById('best-streak').textContent = GameState.bestStreak;
+
+    const gradeEl = document.getElementById('final-grade');
+    if (gradeEl) {
+        const g = gradeFromScore(GameState.score);
+        gradeEl.textContent = g.letter;
+        gradeEl.className = 'grade-letter ' + g.cls;
+    }
+    const ft = document.getElementById('final-time');
+    if (ft) ft.textContent = formatTime(GameState.time);
+    const fd = document.getElementById('final-delivered');
+    if (fd) fd.textContent = String(GameState.ordersDelivered);
+    const ff = document.getElementById('final-failed');
+    if (ff) ff.textContent = String(GameState.failedOrders);
+    const fdiff = document.getElementById('final-difficulty');
+    if (fdiff) fdiff.textContent = GameState.difficulty.toFixed(1);
+
     document.getElementById('game-over').classList.remove('hidden');
     document.getElementById('start-btn').disabled = false;
     document.getElementById('pause-btn').disabled = true;
+    document.body.classList.remove('game-running');
 }
 
 // Button listeners
@@ -1861,11 +2410,35 @@ document.getElementById('start-btn').addEventListener('click', startGame);
 document.getElementById('pause-btn').addEventListener('click', togglePause);
 document.getElementById('restart-btn').addEventListener('click', startGame);
 
+const shareBtn = document.getElementById('share-btn');
+if (shareBtn) {
+    shareBtn.addEventListener('click', () => {
+        const score = document.getElementById('final-score')?.textContent || '0';
+        const grade = document.getElementById('final-grade')?.textContent || '?';
+        const streak = document.getElementById('best-streak')?.textContent || '0';
+        const text = `I scored ${score} in Kitchen Overflow (Grade: ${grade}, Streak: ${streak}) — Can you beat me? https://example.com/kitchen`;
+        navigator.clipboard.writeText(text).catch(() => {});
+    });
+}
+
 // =============================================
 // AGENT API (for programmatic control)
 // =============================================
+function serializeAgentInventoryItem(item) {
+    if (!item) return null;
+    if (item.type === 'plate') {
+        return {
+            type: 'plate',
+            dirty: !!item.dirty,
+            items: (item.items || []).map(i => ({ ingredient: i.ingredient, state: i.state }))
+        };
+    }
+    return { ingredient: item.ingredient, state: item.state };
+}
+
 window.KitchenAPI = {
-    // Get full game state
+    version: '2.0.0',
+
     getState: () => ({
         time: GameState.time,
         score: GameState.score,
@@ -1874,6 +2447,10 @@ window.KitchenAPI = {
         bestStreak: GameState.bestStreak,
         rush: { ...GameState.rush },
         failedOrders: GameState.failedOrders,
+        phase: getApiPhase(GameState.time),
+        running: GameState.running,
+        paused: GameState.paused,
+        gameOver: GameState.gameOver,
         chefs: chefs.map(c => ({
             id: c.id,
             name: c.name,
@@ -1928,6 +2505,26 @@ window.KitchenAPI = {
                     components: r.order.recipe.components
                 } : null,
                 hasDirtyDish: r.hasDirtyDish
+            })),
+            dishRacks: stations.dishRacks.map(r => ({
+                id: r.id,
+                pos: [r.x, r.y],
+                cleanPlates: r.count,
+                dirtyPlates: r.dirty || 0,
+                maxClean: r.maxCount || 8
+            })),
+            sinks: stations.sinks.map(s => ({
+                id: s.id,
+                pos: [s.x, s.y]
+            })),
+            trashCans: stations.trashCans.map(t => ({
+                id: t.id,
+                pos: [t.x, t.y]
+            })),
+            counters: stations.counters.map(c => ({
+                id: c.id,
+                pos: [c.x, c.y],
+                items: (c.items || []).map(serializeAgentInventoryItem).filter(Boolean)
             }))
         },
         orders: orders.map(o => ({
@@ -1939,27 +2536,30 @@ window.KitchenAPI = {
         })),
         recipes: RECIPES
     }),
-    
-    // Send command to chef
+
     command: (chefId, targetId) => {
         if (!GameState.running || GameState.paused) return { success: false, error: 'Game not running' };
-        
+
         const chef = chefs.find(c => c.id === chefId);
         if (!chef) return { success: false, error: 'Invalid chef_id' };
         if (chef.busy) return { success: false, error: 'Chef is busy' };
-        
-        // Find target station
+
         let stationInfo = null;
-        let targetX, targetY;
-        
+        let targetX;
+        let targetY;
+
         const stationTypes = {
             ingredientBins: 'ingredientBin',
-            stoves: 'stove', 
+            stoves: 'stove',
             cuttingBoards: 'cuttingBoard',
             platingAreas: 'platingArea',
-            receptionStands: 'receptionStand'
+            receptionStands: 'receptionStand',
+            sinks: 'sink',
+            trashCans: 'trash',
+            dishRacks: 'dishRack',
+            counters: 'counter'
         };
-        
+
         for (const [arrayName, typeName] of Object.entries(stationTypes)) {
             const found = stations[arrayName].find(s => s.id === targetId);
             if (found) {
@@ -1969,32 +2569,58 @@ window.KitchenAPI = {
                 break;
             }
         }
-        
+
         if (!stationInfo) return { success: false, error: 'Invalid target' };
-        
+
         const adjacent = findAdjacentWalkable(targetX, targetY);
         if (!adjacent) return { success: false, error: 'Cannot reach target' };
-        
+
+        if (isChefAdjacentToStation(chef.x, chef.y, targetX, targetY)) {
+            chef.path = [];
+            chef.targetStation = null;
+            interactWithStation(chef, stationInfo);
+            return { success: true };
+        }
+
         const path = findPath(chef.x, chef.y, adjacent.x, adjacent.y);
-        if (path.length === 0 && !(chef.x === adjacent.x && chef.y === adjacent.y)) {
+        if (path.length === 0) {
             return { success: false, error: 'No path found' };
         }
-        
+
         chef.path = path;
         chef.targetStation = stationInfo;
-        
+
         return { success: true };
     },
-    
-    // Select chef (for visualization)
+
+    boost: (chefId) => {
+        const chef = chefs.find(c => c.id === chefId);
+        return tryBoostChef(chef);
+    },
+
+    getRecipes: () =>
+        Object.entries(RECIPES).map(([name, recipe]) => ({
+            name,
+            emoji: recipe.emoji,
+            difficulty: recipe.difficulty,
+            components: recipe.components.map(c => ({ ingredient: c.ingredient, state: c.state }))
+        })),
+
+    on: (event, callback) => EventBus.on(event, callback),
+    onTick: callback => EventBus.on('tick', callback),
+    onOrderSpawned: callback => EventBus.on('orderSpawned', callback),
+    onOrderExpired: callback => EventBus.on('orderExpired', callback),
+    onOrderDelivered: callback => EventBus.on('orderDelivered', callback),
+    onOrderFailed: callback => EventBus.on('orderFailed', callback),
+    onGameOver: callback => EventBus.on('gameOver', callback),
+    onPhaseChanged: callback => EventBus.on('phaseChanged', callback),
+
     selectChef: (chefId) => {
         GameState.selectedChef = chefId;
     },
-    
-    // Start game
+
     start: startGame,
-    
-    // Pause/resume
+
     togglePause: togglePause
 };
 
@@ -2002,8 +2628,60 @@ window.KitchenAPI = {
 initChefs();
 render();
 
-console.log('🍳 Autonomous Kitchen Arena loaded!');
-console.log('Use window.KitchenAPI for programmatic control:');
-console.log('  KitchenAPI.getState() - Get full game state');
-console.log('  KitchenAPI.command(chefId, targetId) - Send chef to station');
-console.log('  KitchenAPI.start() - Start game');
+console.log(`
+Kitchen Overflow v2.0
+================================
+API: window.KitchenAPI
+
+Quick start:
+  KitchenAPI.start()                    // Start game
+  KitchenAPI.getState()                 // Full game state snapshot
+  KitchenAPI.command(chefId, stationId) // Send chef to station
+  KitchenAPI.boost(chefId)              // Activate speed boost
+  KitchenAPI.onTick(fn)                 // Run fn every game frame
+  KitchenAPI.getRecipes()               // List all recipes
+
+Station IDs:
+  bin_0..5      Ingredient bins (tomato, lettuce, onion, meat, dough, cheese)
+  stove_0..2    Stoves
+  cutting_0..1  Cutting boards
+  plating_0..1  Plating areas
+  dishrack_0    Dish rack
+  sink_0        Sink
+  trash_0       Trash
+  counter_0..N  Counter tiles
+  reception_0..4 Customer stands
+
+Events:
+  KitchenAPI.onOrderSpawned(fn)   // New order appeared
+  KitchenAPI.onOrderExpired(fn)   // Order timed out
+  KitchenAPI.onOrderDelivered(fn) // Correct delivery
+  KitchenAPI.onOrderFailed(fn)    // Wrong dish at reception
+  KitchenAPI.onPhaseChanged(fn)   // tutorial / ramp / automation / endurance
+  KitchenAPI.onGameOver(fn)       // Game ended
+
+Minimal steak agent (single chef — meat on plating_0, then plate, merge, deliver):
+  KitchenAPI.onTick(() => {
+    const s = KitchenAPI.getState();
+    if (!s.running || s.paused) return;
+    const c = s.chefs[0];
+    if (c.busy || c.hasPath) return;
+    const steak = s.orders.find(o => o.dish === 'Steak');
+    if (!steak) return;
+    const h = c.holding;
+    const platItems = s.stations.platingAreas[0].items || [];
+    const meatReady = platItems.some(i => i.ingredient === 'meat' && i.state === 'cooked' && i.type !== 'plate');
+    if (!h) {
+      KitchenAPI.command(0, meatReady ? 'dishrack_0' : 'bin_3');
+      return;
+    }
+    if (h.ingredient === 'meat' && h.state === 'raw') { KitchenAPI.command(0, 'stove_0'); return; }
+    if (h.ingredient === 'meat' && h.state === 'cooked') { KitchenAPI.command(0, 'plating_0'); return; }
+    if (h.type === 'plate') {
+      if (h.items && h.items.some(i => i.ingredient === 'meat' && i.state === 'cooked')) KitchenAPI.command(0, steak.standId);
+      else KitchenAPI.command(0, 'plating_0');
+    }
+  });
+
+Full docs: open docs.html
+`);
