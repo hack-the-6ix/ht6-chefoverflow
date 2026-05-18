@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chef Overflow — Agent API Reference</title>
+    <title>Chef Overflow: Agent API Reference</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
             --bg:       #0D0820;
@@ -29,7 +29,7 @@
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background: linear-gradient(165deg, var(--bg) 0%, var(--navy) 38%, var(--midnight) 100%);
             color: var(--text);
             line-height: 1.6;
@@ -225,10 +225,10 @@
 <div class="wrap">
     <header>
         <img src="logo.png" alt="Hack the 6ix" class="ht6-logo">
-        <h1>Chef Overflow — Agent API Reference</h1>
+        <h1>Chef Overflow: Agent API Reference</h1>
         <p class="subtitle">Build an AI agent to run your kitchen. Top scores earn automatic admission to Hack the 6ix 2026.</p>
         <div class="header-row">
-            <a href="game.html" class="back-link">← Back to Game</a>
+            <a href="index.html" class="back-link">← Back to Game</a>
             <span class="badge">KitchenAPI v2.0.0</span>
         </div>
     </header>
@@ -237,7 +237,7 @@
     <div class="panel">
         <p>Five chefs move on a grid kitchen. You send them to stations with <code>KitchenAPI.command(chefId, stationId)</code>. Orders appear at reception stands; each order lists the exact ingredients and preparation state required (raw, chopped, or cooked).</p>
         <p>Chefs take ingredients from bins → chop at cutting boards → cook on stoves → combine items on plating areas with a <strong>clean plate</strong> from the dish rack → deliver the finished plate to the reception stand that holds that order.</p>
-        <p>After a correct delivery, the customer leaves a <strong>dirty dish</strong> on the stand. You must pick it up with empty hands, wash at the sink, and return clean plates to the dish rack. <strong>Plates are a finite shared resource</strong> — running out stalls the kitchen.</p>
+        <p>After a correct delivery, the customer leaves a <strong>dirty dish</strong> on the stand. You must pick it up with empty hands, wash at the sink, and return clean plates to the dish rack. <strong>Plates are a finite shared resource</strong>, running out stalls the kitchen.</p>
         <p>The game ends after <strong>three expired orders</strong>. Score = delivery points + endurance-time bonus after 10 minutes. <strong>Difficulty ramps aggressively</strong>: the first minute is approachable manually; after that, automation is essentially required.</p>
     </div>
 
@@ -254,21 +254,40 @@
 
     <h2>2. Quick Start</h2>
     <ol>
-        <li>Open <a href="game.html">game.html</a> in Chrome (or another modern browser).</li>
+        <li>Open <a href="index.html">index.html</a> in Chrome (or another modern browser).</li>
         <li>Open DevTools <kbd>F12</kbd> → <strong>Console</strong>.</li>
-        <li>Paste one of the example agents from Section 8 (or the minimal snippet printed in the console banner).</li>
+        <li>Paste one of the example agents from Section 8 (or the minimal snippet printed in the console banner). Register it with <code>KitchenAPI.run(fn)</code>.</li>
         <li>Click <strong>Start Game</strong> or call <code>KitchenAPI.start()</code>.</li>
         <li>Iterate: add chefs, more recipes, bussing logic, and rush handling.</li>
     </ol>
-    <div class="tip tip-info">You can also save agent code in a <code>.js</code> file and inject it via a bookmarklet or a local <code>&lt;script&gt;</code> tag — any method that runs in the page context where <code>window.KitchenAPI</code> is available.</div>
+    <div class="tip tip-info">Always register your agent with <code>KitchenAPI.run(fn)</code>. It survives <code>start()</code> and restarts, and re-pasting your script just replaces the old agent. Raw <code>KitchenAPI.onTick(fn)</code> listeners are <strong>cleared on every <code>start()</code></strong>, so the order you paste vs. start matters for them, <code>run()</code> avoids that pitfall entirely.</div>
+    <div class="tip tip-info">You can also save agent code in a <code>.js</code> file and inject it via a bookmarklet or a local <code>&lt;script&gt;</code> tag, any method that runs in the page context where <code>window.KitchenAPI</code> is available.</div>
 
     <h2>3. API Reference</h2>
 
     <h3>KitchenAPI.version</h3>
     <p><strong>Type:</strong> <code>string</code>. Current value: <code>"2.0.0"</code>.</p>
 
+    <h3>KitchenAPI.run(fn)</h3>
+    <p><strong>Recommended entry point.</strong> Registers <code>fn</code> as your agent. It runs once per game frame and <strong>survives <code>start()</code> and restarts</strong>. Calling <code>run()</code> again replaces the previous agent, so re-pasting your script is always safe (no double-registration).</p>
+    <p><strong>Signature:</strong> <code>fn(state, api, tick)</code>, where <code>state</code> is a fresh <code>getState()</code> snapshot, <code>api</code> is <code>KitchenAPI</code>, and <code>tick</code> is <code>{ dt, time }</code>. Exceptions thrown inside <code>fn</code> are caught and logged as <code>"Agent error:"</code>, the run continues.</p>
+    <p><strong>Returns:</strong> <code>undefined</code>.</p>
+    <pre><code>KitchenAPI.run((s, api) => {
+  if (!s.running || s.paused) return;
+  // your logic here
+});
+KitchenAPI.start();</code></pre>
+
+    <h3>KitchenAPI.stop()</h3>
+    <p>Unregisters the agent set by <code>run()</code>. Does not stop the game.</p>
+    <p><strong>Returns:</strong> <code>undefined</code>.</p>
+
+    <h3>KitchenAPI.clearListeners()</h3>
+    <p>Removes all event listeners registered via <code>on()</code> / <code>onTick()</code> / etc. The <code>run()</code> agent is re-attached automatically. Useful to reset raw listeners without restarting.</p>
+    <p><strong>Returns:</strong> <code>undefined</code>.</p>
+
     <h3>KitchenAPI.start()</h3>
-    <p>Starts or <strong>restarts</strong> the game. Resets stations, chefs, orders, score, and <strong>clears all registered event listeners</strong>. Re-register all hooks after each call to <code>start()</code>.</p>
+    <p>Starts or <strong>restarts</strong> the game. Resets stations, chefs, orders, and score. <strong>Clears raw event listeners</strong> (those registered with <code>onTick</code>, <code>on</code>, etc.), so re-register them after each <code>start()</code>, or use <code>KitchenAPI.run()</code> instead, which survives restarts automatically.</p>
     <p><strong>Returns:</strong> <code>undefined</code>.</p>
 
     <h3>KitchenAPI.togglePause()</h3>
@@ -278,7 +297,7 @@
     <h3>KitchenAPI.command(chefId, stationId)</h3>
     <p><strong>Signature:</strong> <code>(chefId: number, stationId: string) → { success: boolean, error?: string }</code></p>
     <p>Queues pathfinding to a walkable tile adjacent to the target station, then triggers the same interaction as a mouse click. Fails if: game not running or paused, invalid chef id, chef is <code>busy</code>, unknown station id, no adjacent walkable tile, or A* finds no path.</p>
-    <p><strong>Chef IDs:</strong> <code>0</code>–<code>4</code>. <strong>Station IDs:</strong> strings like <code>'bin_3'</code>, <code>'stove_0'</code>, <code>'reception_2'</code> — see Section 4.</p>
+    <p><strong>Chef IDs:</strong> <code>0</code>–<code>4</code>. <strong>Station IDs:</strong> strings like <code>'bin_3'</code>, <code>'stove_0'</code>, <code>'reception_2'</code>, see Section 4.</p>
     <pre><code>const r = KitchenAPI.command(0, 'sink_0');
 if (!r.success) console.error(r.error);</code></pre>
 
@@ -300,7 +319,7 @@ if (!r.success) console.error(r.error);</code></pre>
   bestStreak: number,
   rush: { active: boolean, timeLeft: number, cooldown: number },
   failedOrders: number,
-  maxFailedOrders: number,   // 3 — game ends when failedOrders >= this
+  maxFailedOrders: number,   // 3, game ends when failedOrders >= this
   running: boolean,
   paused: boolean,
   gameOver: boolean,
@@ -332,7 +351,7 @@ if (!r.success) console.error(r.error);</code></pre>
     <p>Reception <code>order</code> when present: <code>{ id, dish, timeLeft, components }</code>. Stove <code>ready</code> / <code>burnt</code> mirror the UI progress thresholds.</p>
 
     <h3>KitchenAPI.getRecipes()</h3>
-    <p><strong>Returns:</strong> <code>Array&lt;{ name, emoji, difficulty, components }&gt;</code> — static recipe metadata without internal step strings.</p>
+    <p><strong>Returns:</strong> <code>Array&lt;{ name, icon, difficulty, components }&gt;</code>, static recipe metadata without internal step strings. <code>icon</code> is a short string code (e.g. <code>"STK"</code> for Steak).</p>
 
     <h3>Event Registration</h3>
     <p>Each method returns an <strong>unsubscribe</strong> function: <code>const off = KitchenAPI.onTick(fn); off();</code></p>
@@ -386,38 +405,37 @@ if (!r.success) console.error(r.error);</code></pre>
 
     <h2>6. Game Mechanics for Agents</h2>
     <ul>
-        <li><strong>Chefs block each other</strong> — no two chefs on the same tile; pathfinding may fail if every adjacent tile is occupied.</li>
-        <li><strong>One hold slot</strong> — a chef holds either one ingredient (with state) or one plate (bag of ingredients). No stacking.</li>
-        <li><strong>command() is asynchronous</strong> — it sets <code>path</code> and <code>targetStation</code>. Wait until <code>!chef.busy && !chef.hasPath</code> before issuing a new command for that chef.</li>
-        <li><strong>Busy during processing</strong> — chopping, stove wait, and sink wash all set <code>busy = true</code>. Don't stack commands on a busy chef.</li>
-        <li><strong>Stoves keep cooking unattended</strong> — food placed on a stove stays and can burn; always send someone back to pick it up in time.</li>
-        <li><strong>Plates are a resource</strong> — monitor <code>stations.dishRacks[0].cleanPlates</code>; build a bus loop (dirty stand → sink → rack) or the kitchen stalls.</li>
-        <li><strong>Delivery matching is exact</strong> — component count and every <code>(ingredient, state)</code> pair must match the order; extras cause a failed delivery.</li>
-        <li><strong>Wrong delivery</strong> — plate is discarded, streak resets to 0.</li>
-        <li><strong>VIP orders</strong> — shorter timer, 1.5× score multiplier (marked with ★ in the UI).</li>
-        <li><strong>Streak multiplier</strong> — +5% per consecutive correct delivery, capped at +100% (2×) at streak 20; any wrong delivery or expiry resets to 0.</li>
-        <li><strong>Rush mode</strong> — periodic burst where spawn rate spikes; check <code>state.rush.active</code> to react.</li>
+        <li><strong>Chefs block each other</strong>, no two chefs on the same tile; pathfinding may fail if every adjacent tile is occupied.</li>
+        <li><strong>One hold slot</strong>, a chef holds either one ingredient (with state) or one plate (bag of ingredients). No stacking.</li>
+        <li><strong>command() is asynchronous</strong>, it sets <code>path</code> and <code>targetStation</code>. Wait until <code>!chef.busy && !chef.hasPath</code> before issuing a new command for that chef.</li>
+        <li><strong>Busy during processing</strong>, chopping, stove wait, and sink wash all set <code>busy = true</code>. Don't stack commands on a busy chef.</li>
+        <li><strong>Stoves keep cooking unattended</strong>, food placed on a stove stays and can burn; always send someone back to pick it up in time.</li>
+        <li><strong>Plates are a resource</strong>, monitor <code>stations.dishRacks[0].cleanPlates</code>; build a bus loop (dirty stand → sink → rack) or the kitchen stalls.</li>
+        <li><strong>Delivery matching is exact</strong>, component count and every <code>(ingredient, state)</code> pair must match the order; extras cause a failed delivery.</li>
+        <li><strong>Wrong delivery</strong>, plate is discarded, streak resets to 0.</li>
+        <li><strong>VIP orders</strong>, shorter timer, 1.5× score multiplier (marked with ★ in the UI).</li>
+        <li><strong>Streak multiplier</strong>, +5% per consecutive correct delivery, capped at +100% (2×) at streak 20; any wrong delivery or expiry resets to 0.</li>
+        <li><strong>Rush mode</strong>, periodic burst where spawn rate spikes; check <code>state.rush.active</code> to react.</li>
     </ul>
 
     <h2>7. Agent Architecture Tips</h2>
     <div class="tip tip-info">Prove one recipe end-to-end with one chef before adding more chefs or recipes.</div>
     <ul>
         <li><strong>Role split</strong>: assign chefs to dedicated roles (cook, chopper, plater/deliverer, busser). One chef per role keeps logic simple.</li>
-        <li>Sort work by <code>order.timeLeft</code> — always serve the most urgent order first.</li>
-        <li><strong>Automate the plate lifecycle early</strong> — most naive agents fail when the dish rack empties.</li>
-        <li>Prefer <code>onTick</code> over <code>setInterval</code> so logic stays aligned with the simulation step (<code>dt</code> aware).</li>
+        <li>Sort work by <code>order.timeLeft</code>, always serve the most urgent order first.</li>
+        <li><strong>Automate the plate lifecycle early</strong>, most naive agents fail when the dish rack empties.</li>
+        <li>Register your agent with <code>run()</code> (or <code>onTick</code>) rather than <code>setInterval</code> so logic stays aligned with the simulation step (<code>dt</code> aware).</li>
         <li>Guard every <code>command()</code> with <code>running &amp;&amp; !paused &amp;&amp; !chef.busy &amp;&amp; !chef.hasPath</code> to avoid error spam.</li>
-        <li>Use <code>onOrderSpawned</code> to pre-route chefs rather than polling each tick — reduces latency.</li>
+        <li>Use <code>onOrderSpawned</code> to pre-route chefs rather than polling each tick, reduces latency.</li>
         <li>Watch for burnt stoves: check <code>stove.burnt</code> and trash burnt items promptly.</li>
     </ul>
 
     <h2>8. Example Agents</h2>
     <p>These are <strong>teaching examples</strong>, not optimal solutions. They omit multi-recipe routing, full bussing, boost timing, and rush handling.</p>
 
-    <h3>Example 1 — Single-chef steak bot</h3>
+    <h3>Example 1: Single-chef steak bot</h3>
     <p>Uses <code>plating_0</code> as temporary storage for cooked meat, then fetches a plate and merges at the same plating area before delivering to the order's stand.</p>
-    <pre><code>KitchenAPI.onTick(() => {
-  const s = KitchenAPI.getState();
+    <pre><code>KitchenAPI.run((s, api) => {
   if (!s.running || s.paused) return;
   const c = s.chefs[0];
   if (c.busy || c.hasPath) return;
@@ -430,27 +448,23 @@ if (!r.success) console.error(r.error);</code></pre>
     i => i.ingredient === 'meat' && i.state === 'cooked' && i.type !== 'plate'
   );
 
-  if (!h) { KitchenAPI.command(0, meatReady ? 'dishrack_0' : 'bin_3'); return; }
-  if (h.ingredient === 'meat' && h.state === 'raw')    { KitchenAPI.command(0, 'stove_0');   return; }
-  if (h.ingredient === 'meat' && h.state === 'cooked') { KitchenAPI.command(0, 'plating_0'); return; }
+  if (!h) { api.command(0, meatReady ? 'dishrack_0' : 'bin_3'); return; }
+  if (h.ingredient === 'meat' && h.state === 'raw')    { api.command(0, 'stove_0');   return; }
+  if (h.ingredient === 'meat' && h.state === 'cooked') { api.command(0, 'plating_0'); return; }
   if (h.type === 'plate') {
     const done = h.items && h.items.some(i => i.ingredient === 'meat' && i.state === 'cooked');
-    KitchenAPI.command(0, done ? steak.standId : 'plating_0');
+    api.command(0, done ? steak.standId : 'plating_0');
   }
 });</code></pre>
 
-    <h3>Example 2 — Simple multi-chef coordinator</h3>
+    <h3>Example 2: Simple multi-chef coordinator</h3>
     <p>Chef 0 cooks meat; Chef 1 chops lettuce for Salad; Chef 2 plates and delivers the most urgent available order.</p>
-    <pre><code>function go(id, station) {
-  const s = KitchenAPI.getState();
-  const c = s.chefs[id];
-  if (!s.running || s.paused || c.busy || c.hasPath) return;
-  KitchenAPI.command(id, station);
-}
-
-KitchenAPI.onTick(() => {
-  const s = KitchenAPI.getState();
+    <pre><code>KitchenAPI.run((s, api) => {
   if (!s.running || s.paused) return;
+  const go = (id, station) => {
+    const c = s.chefs[id];
+    if (c && !c.busy && !c.hasPath) api.command(id, station);
+  };
 
   // Chef 0: cycle meat through stove → plating_0
   const c0 = s.chefs[0];
@@ -482,8 +496,8 @@ KitchenAPI.onTick(() => {
 });</code></pre>
 
     <footer>
-        <p>Built for <strong>Hack the 6ix 2026</strong> — Toronto's largest summer hackathon.</p>
-        <p style="margin-top:8px;"><a href="game.html">← Back to Game</a></p>
+        <p>Built for <strong>Hack the 6ix 2026</strong>, Toronto's largest summer hackathon.</p>
+        <p style="margin-top:8px;"><a href="index.html">← Back to Game</a></p>
     </footer>
 </div>
 </body>

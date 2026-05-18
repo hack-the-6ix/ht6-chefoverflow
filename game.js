@@ -55,7 +55,7 @@ const EventBus = {
         if (!this._listeners[event]) this._listeners[event] = [];
         this._listeners[event].push(callback);
         return () => {
-            this._listeners[event] = this._listeners[event].filter(cb => cb !== callback);
+            this._listeners[event] = (this._listeners[event] || []).filter(cb => cb !== callback);
         };
     },
     emit(event, data) {
@@ -73,6 +73,20 @@ const EventBus = {
         this._listeners = {};
     }
 };
+
+// Single persistent agent slot. Survives start()/restart and replaces any
+// prior agent, so re-pasting a script never double-registers.
+let _agentFn = null;
+let _agentOff = null;
+function registerAgent() {
+    if (_agentOff) { _agentOff(); _agentOff = null; }
+    if (typeof _agentFn === 'function') {
+        _agentOff = EventBus.on('tick', (data) => {
+            try { _agentFn(window.KitchenAPI.getState(), window.KitchenAPI, data); }
+            catch (e) { console.error('Agent error:', e); }
+        });
+    }
+}
 
 let lastEmittedPhase = 'tutorial';
 
@@ -290,10 +304,19 @@ const SkinStore = (() => {
     function init() {
         flattenPaths().forEach(load);
     }
-    function draw(path, x, y, w, h) {
+    function draw(path, x, y, w, h, fit) {
         const entry = images.get(path);
         if (!entry || !entry.loaded) return false;
-        ctx.drawImage(entry.img, x, y, w, h);
+        const img = entry.img;
+        if (fit === 'contain' && img.naturalWidth && img.naturalHeight) {
+            // preserve source aspect ratio, anchored bottom-center
+            const scale = Math.min(w / img.naturalWidth, h / img.naturalHeight);
+            const dw = img.naturalWidth * scale;
+            const dh = img.naturalHeight * scale;
+            ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh), dw, dh);
+        } else {
+            ctx.drawImage(img, x, y, w, h);
+        }
         return true;
     }
     return { init, draw };
@@ -338,12 +361,125 @@ const ScoreGuard = (() => {
     return { reset, applyDelta, tick, verifyFinal, receipt };
 })();
 
-function floorFillColor(x, y) {
+const FLOOR_PX = 8; // chunky pixel size for the pixel-art floor texture
+
+function floorBaseColor(x, y) {
     const light = (x + y) % 2 === 0;
     if (x >= 14) {
-        return light ? '#1D1455' : '#180F48';
+        return light ? [29, 20, 85] : [24, 15, 72];
     }
-    return light ? '#1A1250' : '#150E42';
+    return light ? [26, 18, 80] : [21, 14, 66];
+}
+
+function tileHash(x, y, salt) {
+    let h = (x * 374761393 + y * 668265263 + (salt | 0) * 2246822519) >>> 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+    return h ^ (h >>> 16);
+}
+
+function shadeRGB(rgb, amt) {
+    const r = Math.max(0, Math.min(255, rgb[0] + amt));
+    const g = Math.max(0, Math.min(255, rgb[1] + amt));
+    const b = Math.max(0, Math.min(255, rgb[2] + amt));
+    return `rgb(${r},${g},${b})`;
+}
+
+let floorTextureCanvas = null;
+
+function drawPixelSparkle(fc, ox, oy, h) {
+    const s = FLOOR_PX;
+    const gx = 1 + (h % 4);
+    const gy = 1 + ((h >> 4) % 4);
+    const px = ox + gx * s;
+    const py = oy + gy * s;
+    // dim gold arms
+    fc.fillStyle = 'rgba(232,184,75,0.20)';
+    fc.fillRect(px - s, py, s, s);
+    fc.fillRect(px + s, py, s, s);
+    fc.fillRect(px, py - s, s, s);
+    fc.fillRect(px, py + s, s, s);
+    // bright gold core
+    fc.fillStyle = 'rgba(255,214,110,0.62)';
+    fc.fillRect(px, py, s, s);
+}
+
+const WALL_BASE = [92, 84, 134];    // lavender-purple raised border
+const COUNTER_BASE = [122, 116, 152]; // lighter polished work surface / divider
+
+function paintPixelTile(fc, tx, ty, base, bevel, darkAmt, lightAmt, darkPct, lightPct) {
+    const PX = FLOOR_PX;
+    const SUB = CELL_SIZE / PX;
+    const edge = PX / 2;
+    const ox = tx * CELL_SIZE;
+    const oy = ty * CELL_SIZE;
+
+    fc.fillStyle = shadeRGB(base, 0);
+    fc.fillRect(ox, oy, CELL_SIZE, CELL_SIZE);
+
+    // chunky dither speckles, deterministic per sub-cell
+    for (let sy = 0; sy < SUB; sy++) {
+        for (let sx = 0; sx < SUB; sx++) {
+            const n = tileHash(tx * 17 + sx, ty * 17 + sy, 7) % 100;
+            if (n < darkPct) {
+                fc.fillStyle = shadeRGB(base, darkAmt);
+                fc.fillRect(ox + sx * PX, oy + sy * PX, PX, PX);
+            } else if (n < darkPct + lightPct) {
+                fc.fillStyle = shadeRGB(base, lightAmt);
+                fc.fillRect(ox + sx * PX, oy + sy * PX, PX, PX);
+            }
+        }
+    }
+
+    // beveled pixel edges, lit top/left, shadowed bottom/right
+    fc.fillStyle = shadeRGB(base, bevel);
+    fc.fillRect(ox, oy, CELL_SIZE, edge);
+    fc.fillRect(ox, oy, edge, CELL_SIZE);
+    fc.fillStyle = shadeRGB(base, -bevel);
+    fc.fillRect(ox, oy + CELL_SIZE - edge, CELL_SIZE, edge);
+    fc.fillRect(ox + CELL_SIZE - edge, oy, edge, CELL_SIZE);
+}
+
+function paintCounterTile(fc, tx, ty) {
+    // polished pixel countertop: gentle dither, soft bevel, inset panel groove
+    paintPixelTile(fc, tx, ty, COUNTER_BASE, 26, -15, 19, 8, 11);
+    const ox = tx * CELL_SIZE;
+    const oy = ty * CELL_SIZE;
+    const inset = FLOOR_PX;
+    // inset panel groove, darker recessed frame
+    fc.fillStyle = shadeRGB(COUNTER_BASE, -30);
+    fc.fillRect(ox + inset, oy + inset, CELL_SIZE - inset * 2, 2);
+    fc.fillRect(ox + inset, oy + CELL_SIZE - inset - 2, CELL_SIZE - inset * 2, 2);
+    fc.fillRect(ox + inset, oy + inset, 2, CELL_SIZE - inset * 2);
+    fc.fillRect(ox + CELL_SIZE - inset - 2, oy + inset, 2, CELL_SIZE - inset * 2);
+    // polished sheen along the top
+    fc.fillStyle = 'rgba(255,255,255,0.14)';
+    fc.fillRect(ox + FLOOR_PX / 2, oy + FLOOR_PX / 2, CELL_SIZE - FLOOR_PX, 2);
+}
+
+function buildFloorTexture() {
+    floorTextureCanvas = document.createElement('canvas');
+    floorTextureCanvas.width = MAP_WIDTH * CELL_SIZE;
+    floorTextureCanvas.height = MAP_HEIGHT * CELL_SIZE;
+    const fc = floorTextureCanvas.getContext('2d');
+
+    for (let ty = 0; ty < MAP_HEIGHT; ty++) {
+        for (let tx = 0; tx < MAP_WIDTH; tx++) {
+            const t = (map && map[ty]) ? map[ty][tx] : TILE_TYPES.FLOOR;
+            if (t === TILE_TYPES.WALL) {
+                // raised pixel-stone border: strong bevel, no sparkle
+                paintPixelTile(fc, tx, ty, WALL_BASE, 32, -24, 28, 11, 9);
+            } else if (t === TILE_TYPES.COUNTER) {
+                paintCounterTile(fc, tx, ty);
+            } else {
+                const base = floorBaseColor(tx, ty);
+                paintPixelTile(fc, tx, ty, base, 20, -11, 13, 13, 8);
+                const h = tileHash(tx, ty, 1);
+                if (h % 13 === 0) {
+                    drawPixelSparkle(fc, tx * CELL_SIZE, ty * CELL_SIZE, h);
+                }
+            }
+        }
+    }
 }
 
 function drawRoundedHBar(px, py, w, h, progress01, fillColor, trackColor) {
@@ -640,7 +776,7 @@ stations.trashCans.push({ id: 'trash_0', x: trashPos.x, y: trashPos.y });
 
 // 5 stools for customers
 const receptionPositions = [
-    { x: 17, y: 2 }, { x: 17, y: 5 }, { x: 17, y: 8 }, { x: 17, y: 11 }, { x: 17, y: 13 }
+    { x: 17, y: 3 }, { x: 17, y: 5 }, { x: 17, y: 7 }, { x: 17, y: 9 }, { x: 17, y: 11 }
 ];
 receptionPositions.forEach((pos, i) => {
     map[pos.y][pos.x] = TILE_TYPES.RECEPTION_STAND;
@@ -954,7 +1090,7 @@ function interactWithStation(chef, stationInfo) {
                     }
 
                     // Otherwise full / incompatible
-                    showFloatingText(station.x, station.y, 'Counter is full — remove the item first', '#ffb74d');
+                    showFloatingText(station.x, station.y, 'Counter is full, remove the item first', '#ffb74d');
                     return;
                 }
 
@@ -995,7 +1131,7 @@ function interactWithStation(chef, stationInfo) {
                     if (countCleanPlatesInWorld() === 0) {
                         showFloatingText(station.x, station.y, 'No clean plates!', '#ffb74d');
                     } else {
-                        showFloatingText(station.x, station.y, 'No clean plates here — check the line', '#ffb74d');
+                        showFloatingText(station.x, station.y, 'No clean plates here, check the line', '#ffb74d');
                     }
                 }
             } else if (chef.holding && chef.holding.type === 'plate') {
@@ -1005,13 +1141,13 @@ function interactWithStation(chef, stationInfo) {
                         station.dirty = station.dirty || 0;
                         station.dirty += 1;
                         chef.holding = null;
-                        showFloatingText(station.x, station.y, 'Returned dirty plate — it will be washed', '#ff7043');
+                        showFloatingText(station.x, station.y, 'Returned dirty plate, it will be washed', '#ff7043');
                     } else if (station.count < (station.maxCount || 8)) {
                         station.count += 1;
                         chef.holding = null;
                         showFloatingText(station.x, station.y, 'Returned plate to rack', '#ffd54f');
                     } else {
-                        showFloatingText(station.x, station.y, 'Dish rack full — cannot return plate', '#ffb74d');
+                        showFloatingText(station.x, station.y, 'Dish rack full, cannot return plate', '#ffb74d');
                     }
                 } else {
                     showFloatingText(station.x, station.y, 'Clear the plate before returning it', '#ffb74d');
@@ -1119,14 +1255,14 @@ function interactWithStation(chef, stationInfo) {
 
             } else if (chef.holding && chef.holding.type === 'plate') {
                 if (chef.holding.dirty) {
-                    showFloatingText(station.x, station.y, 'Dirty plate — wash it first', '#ffb74d');
+                    showFloatingText(station.x, station.y, 'Dirty plate, wash it first', '#ffb74d');
                     return;
                 }
                 // If holding a plate and there are items on the plating area, combine them onto the plate
                 if (station.items && station.items.length > 0) {
                     // If the plating area already has a plate, disallow stacking plates
                     if (station.items.length === 1 && station.items[0].type === 'plate') {
-                        showFloatingText(station.x, station.y, 'Cannot stack plates here — pick up the existing plate first', '#ffb74d');
+                        showFloatingText(station.x, station.y, 'Cannot stack plates here, pick up the existing plate first', '#ffb74d');
                     } else {
                         chef.holding.items = chef.holding.items.concat(station.items);
                         station.items = [];
@@ -1289,7 +1425,7 @@ function updateFloatingTexts(dt) {
 }
 
 function drawFloatingTexts() {
-    const fontFamily = 'system-ui, "Segoe UI", sans-serif';
+    const fontFamily = 'Inter, system-ui, sans-serif';
     for (const ft of floatingTexts) {
         const alpha = ft.life / ft.maxLife;
         const fontPx = ft.fontSize || 14;
@@ -1589,19 +1725,8 @@ function render() {
     if (floorImg.complete && floorImg.naturalWidth > 0) {
         ctx.drawImage(floorImg, 0, 0);
     } else {
-        for (let y = 0; y < MAP_HEIGHT; y++) {
-            for (let x = 0; x < MAP_WIDTH; x++) {
-                ctx.fillStyle = floorFillColor(x, y);
-                ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
-            }
-        }
-        ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-        ctx.lineWidth = 1;
-        for (let y = 0; y < MAP_HEIGHT; y++) {
-            for (let x = 0; x < MAP_WIDTH; x++) {
-                ctx.strokeRect(x * CELL_SIZE + 0.5, y * CELL_SIZE + 0.5, CELL_SIZE - 1, CELL_SIZE - 1);
-            }
-        }
+        if (!floorTextureCanvas) buildFloorTexture();
+        ctx.drawImage(floorTextureCanvas, 0, 0);
     }
     for (let y = 0; y < MAP_HEIGHT; y++) {
         for (let x = 0; x < MAP_WIDTH; x++) {
@@ -1677,11 +1802,8 @@ function drawTile(x, y, type) {
     let color;
     switch (type) {
         case TILE_TYPES.WALL:
-            color = COLORS.wall;
-            break;
         case TILE_TYPES.COUNTER:
-            color = COLORS.counter;
-            break;
+            return; // walls & counters are baked into the pixel floor texture
         default:
             color = COLORS.floor;
     }
@@ -1702,7 +1824,7 @@ function drawStations() {
         ctx.roundRect(px + pad, py + pad, CELL_SIZE - pad * 2, CELL_SIZE - pad * 2, 6);
         ctx.fill();
 
-        /* Full inner square (same inset on all sides — was CELL_SIZE-22 height, which left a brown band) */
+        /* Full inner square (same inset on all sides, was CELL_SIZE-22 height, which left a brown band) */
         const innerInset = 8;
         const innerSize = CELL_SIZE - innerInset * 2;
         const innerFill =
@@ -1721,7 +1843,7 @@ function drawStations() {
         ctx.stroke();
 
         const drewIngredientSkin = SkinStore.draw(SKIN_SOURCES.ingredient[bin.ingredient], px + 10, py + 10, CELL_SIZE - 20, CELL_SIZE - 20);
-        ctx.font = 'bold 11px system-ui, "Segoe UI", sans-serif';
+        ctx.font = 'bold 11px Inter, system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = '#fff';
@@ -1769,7 +1891,7 @@ function drawStations() {
 
             ctx.textAlign = 'center';
             ctx.textBaseline = 'bottom';
-            ctx.font = 'bold 13px system-ui, "Segoe UI", sans-serif';
+            ctx.font = 'bold 13px Inter, system-ui, sans-serif';
             if (progress >= 1.2) {
                 ctx.fillStyle = 'rgba(0,0,0,0.75)';
                 ctx.fillText('BURNING!', px + CELL_SIZE / 2 + 1, py - 2 + 1);
@@ -1810,7 +1932,7 @@ function drawStations() {
         }
 
         ctx.fillStyle = '#fff';
-        ctx.font = 'bold 16px system-ui, "Segoe UI", sans-serif';
+        ctx.font = 'bold 16px Inter, system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(String(rack.count), px + CELL_SIZE / 2 + 14, py + CELL_SIZE / 2 - 2);
@@ -1823,7 +1945,7 @@ function drawStations() {
             ctx.lineWidth = 2;
             ctx.strokeRect(px + 4, py + 4, 22, 16);
             ctx.fillStyle = '#ffccbc';
-            ctx.font = 'bold 11px system-ui, sans-serif';
+            ctx.font = 'bold 11px Inter, system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(String(dirty), px + 15, py + 12);
@@ -1912,7 +2034,7 @@ function drawStations() {
             });
 
             ctx.fillStyle = '#fff';
-            ctx.font = 'bold 12px system-ui, sans-serif';
+            ctx.font = 'bold 12px Inter, system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.fillText(plateItems.length.toString(), px + CELL_SIZE - 10, py + 14);
         }
@@ -1938,7 +2060,7 @@ function drawStations() {
             ctx.beginPath();
             ctx.roundRect(px + 8, py + 8, CELL_SIZE - 16, CELL_SIZE - 16, 8);
             ctx.stroke();
-            ctx.font = '22px system-ui, sans-serif';
+            ctx.font = '22px Inter, system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText('SNK', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
@@ -1952,7 +2074,7 @@ function drawStations() {
         ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
         const drewTrashSkin = SkinStore.draw(SKIN_SOURCES.station.trash, px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
         if (!drewTrashSkin) {
-            ctx.font = '24px system-ui, sans-serif';
+            ctx.font = '24px Inter, system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText('TRH', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
@@ -1972,7 +2094,7 @@ function drawStations() {
         ctx.fillStyle = 'rgba(0,0,0,0.55)';
         ctx.fillRect(px + 5, py + 5, 16, 13);
         ctx.fillStyle = '#fff';
-        ctx.font = 'bold 10px system-ui, sans-serif';
+        ctx.font = 'bold 10px Inter, system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(String(standNum), px + 13, py + 12);
@@ -1991,7 +2113,7 @@ function drawStations() {
             ctx.fill();
             ctx.shadowBlur = 0;
 
-            ctx.font = '18px system-ui, sans-serif';
+            ctx.font = '18px Inter, system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = '#fff';
@@ -2010,7 +2132,7 @@ function drawStations() {
                 ctx.strokeRect(px + 1, py + 1, CELL_SIZE - 2, CELL_SIZE - 2);
             }
         } else if (stand.customer) {
-            ctx.font = 'bold 22px system-ui, sans-serif';
+            ctx.font = 'bold 22px Inter, system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = '#a5d6a7';
@@ -2031,7 +2153,7 @@ function drawStations() {
             ctx.stroke();
         } else {
             ctx.fillStyle = 'rgba(255,255,255,0.2)';
-            ctx.font = '20px system-ui, sans-serif';
+            ctx.font = '20px Inter, system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText('?', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
@@ -2049,12 +2171,6 @@ function drawCounters() {
         const px = counter.x * CELL_SIZE;
         const py = counter.y * CELL_SIZE;
 
-        ctx.fillStyle = COLORS.counter;
-        ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-
-        ctx.fillStyle = 'rgba(255,255,255,0.12)';
-        ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, 1);
-
         if (counter.items && counter.items.length > 0) {
             const top = counter.items[counter.items.length - 1];
             ctx.fillStyle = 'rgba(255,255,255,0.04)';
@@ -2069,7 +2185,7 @@ function drawCounters() {
                 ctx.lineWidth = 2;
                 ctx.stroke();
                 ctx.fillStyle = '#333';
-                ctx.font = 'bold 10px system-ui, sans-serif';
+                ctx.font = 'bold 10px Inter, system-ui, sans-serif';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText(String(top.items.length), px + CELL_SIZE / 2, py + CELL_SIZE / 2);
@@ -2082,14 +2198,7 @@ function drawCounters() {
                 ctx.lineWidth = 2;
                 ctx.stroke();
             }
-        } else {
-            ctx.fillStyle = 'rgba(255,255,255,0.01)';
-            ctx.fillRect(px + 2, py + CELL_SIZE - 8, CELL_SIZE - 4, 4);
         }
-
-        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
     }
 }
 
@@ -2137,7 +2246,7 @@ function drawChef(chef) {
         ctx.stroke();
     }
 
-    const drewChefSkin = SkinStore.draw(SKIN_SOURCES.chef[chef.id], px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+    const drewChefSkin = SkinStore.draw(SKIN_SOURCES.chef[chef.id], px + 2, py, CELL_SIZE - 4, CELL_SIZE - 3, 'contain');
     if (!drewChefSkin) {
         ctx.fillStyle = COLORS.chef[chef.id];
         ctx.beginPath();
@@ -2152,7 +2261,7 @@ function drawChef(chef) {
         ctx.fillRect(px + 10, py + 10, CELL_SIZE - 20, 4);
 
         ctx.fillStyle = '#fff';
-        ctx.font = 'bold 17px system-ui, "Segoe UI", sans-serif';
+        ctx.font = 'bold 17px Inter, system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText((chef.id + 1).toString(), cx, cy + 3);
@@ -2171,7 +2280,7 @@ function drawChef(chef) {
             ctx.fill();
             ctx.stroke();
             ctx.fillStyle = '#263238';
-            ctx.font = 'bold 10px system-ui, sans-serif';
+            ctx.font = 'bold 10px Inter, system-ui, sans-serif';
             ctx.fillText(String(chef.holding.items.length), bx, by);
         } else {
             ctx.fillStyle = COLORS[chef.holding.ingredient] || '#ccc';
@@ -2179,7 +2288,7 @@ function drawChef(chef) {
             ctx.arc(bx, by, r, 0, Math.PI * 2);
             ctx.fill();
             ctx.stroke();
-            ctx.font = 'bold 8px system-ui, sans-serif';
+            ctx.font = 'bold 8px Inter, system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             if (chef.holding.state === INGREDIENT_STATES.CHOPPED) {
@@ -2209,7 +2318,7 @@ function drawChef(chef) {
 
     if (chef.busy) {
         ctx.fillStyle = '#ffeb3b';
-        ctx.font = '16px system-ui, sans-serif';
+        ctx.font = '16px Inter, system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('SPD', cx, py + 6);
@@ -2261,7 +2370,7 @@ function drawLabels() {
     ctx.fillRect(svcX, y0, svcW, 2);
 
     // Labels
-    ctx.font = 'bold 11px system-ui, "Segoe UI", sans-serif';
+    ctx.font = 'bold 11px Inter, system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const midY = y0 + bannerH / 2 + 1;
@@ -2279,7 +2388,7 @@ function drawLabels() {
 let lastDisplayedStreak = 0;
 const LEADERBOARD_KEY = 'chefOverflowLeaderboardV1';
 
-// Supabase client — credentials defined in game.html before this script loads.
+// Supabase client, credentials defined in game.html before this script loads.
 const _db = (typeof window.supabase !== 'undefined' && typeof SUPABASE_URL !== 'undefined' && SUPABASE_URL !== 'https://YOUR_PROJECT.supabase.co')
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     : null;
@@ -2334,12 +2443,7 @@ async function renderSideLeaderboard() {
         mount.innerHTML = '<div class="orders-empty">No scores yet.</div>';
         return;
     }
-    mount.innerHTML = scores.map((e, i) =>
-        `<div class="lb-score-row${i === 0 ? ' lb-rank-1' : ''}">
-            <span class="lb-score-rank">#${i + 1}</span>
-            <span>${e.score.toLocaleString()}</span>
-        </div>`
-    ).join('');
+    mount.innerHTML = scores.map((e, i) => lbRowHTML(e.score, i)).join('');
 }
 
 async function fetchGlobalLeaderboard() {
@@ -2362,12 +2466,7 @@ async function renderLeaderboard() {
 
     const global = await fetchGlobalLeaderboard();
     if (global && global.length > 0) {
-        mount.innerHTML = global.map((e, i) =>
-            `<div class="lb-score-row${i === 0 ? ' lb-rank-1' : ''}">
-                <span class="lb-score-rank">#${i + 1}</span>
-                <span>${e.score.toLocaleString()}</span>
-            </div>`
-        ).join('');
+        mount.innerHTML = global.map((e, i) => lbRowHTML(e.score, i)).join('');
         return;
     }
 
@@ -2376,12 +2475,7 @@ async function renderLeaderboard() {
         mount.innerHTML = '<div class="orders-empty">No verified runs yet.</div>';
         return;
     }
-    mount.innerHTML = entries.map((e, i) =>
-        `<div class="lb-score-row${i === 0 ? ' lb-rank-1' : ''}">
-            <span class="lb-score-rank">#${i + 1}</span>
-            <span>${e.score.toLocaleString()}</span>
-        </div>`
-    ).join('');
+    mount.innerHTML = entries.map((e, i) => lbRowHTML(e.score, i)).join('');
 }
 
 async function submitVerifiedScore() {
@@ -2423,13 +2517,13 @@ async function submitVerifiedScore() {
         try {
             const { error } = await _db.from('leaderboard').insert(entry);
             if (error) {
-                statusEl.textContent = 'Saved locally — could not reach global leaderboard.';
+                statusEl.textContent = 'Saved locally, could not reach global leaderboard.';
             } else {
                 statusEl.textContent = 'Score submitted to global leaderboard!';
                 renderSideLeaderboard();
             }
         } catch (e) {
-            statusEl.textContent = 'Saved locally — could not reach global leaderboard.';
+            statusEl.textContent = 'Saved locally, could not reach global leaderboard.';
         }
     } else {
         statusEl.textContent = 'Saved locally (Supabase not configured).';
@@ -2538,8 +2632,8 @@ function updateUI() {
         }
     } else {
         document.getElementById('chef-info').textContent = 'Click a chef to select';
-        document.getElementById('item-info').textContent = '—';
-        document.getElementById('boost-info').textContent = '—';
+        document.getElementById('item-info').textContent = '-';
+        document.getElementById('boost-info').textContent = '-';
     }
 
     const chefChrome = document.querySelector('.ui-chef-compact');
@@ -2717,6 +2811,7 @@ function activateBoost() {
 // =============================================
 function startGame() {
     EventBus.clear();
+    registerAgent();
     GameState.running = true;
     GameState.paused = false;
     GameState.gameOver = false;
@@ -2834,7 +2929,7 @@ if (shareBtn) {
         const score = document.getElementById('final-score')?.textContent || '0';
         const grade = document.getElementById('final-grade')?.textContent || '?';
         const streak = document.getElementById('best-streak')?.textContent || '0';
-        const text = `I scored ${score} in Chef Overflow (Grade: ${grade}, Streak: ${streak}) — Can you beat me? https://example.com/chef`;
+        const text = `I scored ${score} in Chef Overflow (Grade: ${grade}, Streak: ${streak}). Can you beat me? https://example.com/chef`;
         navigator.clipboard.writeText(text).catch(() => {});
     });
 }
@@ -3038,6 +3133,10 @@ window.KitchenAPI = {
         GameState.selectedChef = chefId;
     },
 
+    run: (fn) => { _agentFn = fn; registerAgent(); },
+    stop: () => { _agentFn = null; registerAgent(); },
+    clearListeners: () => EventBus.clear(),
+
     start: startGame,
 
     togglePause: togglePause
@@ -3057,11 +3156,12 @@ Chef Overflow v2.0
 API: window.KitchenAPI
 
 Quick start:
-  KitchenAPI.start()                    // Start game
+  KitchenAPI.run(fn)                    // Register your agent: fn(state, api, tick)
+  KitchenAPI.start()                    // Start game (run() agents survive restarts)
+  KitchenAPI.stop()                     // Unregister your agent
   KitchenAPI.getState()                 // Full game state snapshot
   KitchenAPI.command(chefId, stationId) // Send chef to station
   KitchenAPI.boost(chefId)              // Activate speed boost
-  KitchenAPI.onTick(fn)                 // Run fn every game frame
   KitchenAPI.getRecipes()               // List all recipes
 
 Station IDs:
@@ -3083,7 +3183,7 @@ Events:
   KitchenAPI.onPhaseChanged(fn)   // tutorial / ramp / automation / endurance
   KitchenAPI.onGameOver(fn)       // Game ended
 
-Minimal steak agent (single chef — meat on plating_0, then plate, merge, deliver):
+Minimal steak agent (single chef, meat on plating_0, then plate, merge, deliver):
   KitchenAPI.onTick(() => {
     const s = KitchenAPI.getState();
     if (!s.running || s.paused) return;

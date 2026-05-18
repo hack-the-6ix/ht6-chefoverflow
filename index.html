@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chef Overflow</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body class="game-page">
     <header class="site-header">
@@ -12,23 +15,43 @@
         <img src="logo.png" alt="Hack the 6ix" class="ht6-logo">
         <h1 id="game-title">Chef Overflow</h1>
     </header>
-    
+
     <div id="game-container">
-        <div id="ui-panel">
-            <h3>Status</h3>
-            <div id="score-display">Score: <span id="score">0</span></div>
-            <div id="time-display">Time: <span id="time">0:00</span></div>
-            <div id="phase-display">Phase: <span id="phase" class="phase-value phase-tutorial">—</span></div>
-            <div id="difficulty-display">Difficulty: <span id="difficulty">1.0x</span></div>
-            <div id="endurance-banner" class="endurance-banner">ENDURANCE MODE — Every second counts!</div>
-            <div id="streak-display">Streak: <span id="streak">0</span></div>
-            <div id="rush-display" class="status-pill">Rush: <span id="rush">Idle</span></div>
-            <hr>
-            <h3>Selected Chef</h3>
-            <div id="selected-chef"><span id="chef-info">Click a chef (1-5)</span></div>
-            <div id="held-item">Holding: <span id="item-info">-</span></div>
-            <div id="boost-status">Boost: <span id="boost-info">-</span></div>
-            <hr>
+        <aside id="ui-panel">
+            <div class="ui-hero">
+                <div class="ui-score-block">
+                    <div class="ui-label">Score</div>
+                    <div id="score" class="ui-score-value">0</div>
+                </div>
+                <div class="ui-time-block">
+                    <div class="ui-label">Time</div>
+                    <div id="time" class="ui-time-value">0:00</div>
+                </div>
+                <div class="ui-phase-block">
+                    <div class="ui-label">Phase</div>
+                    <div><span id="phase" class="phase-value phase-tutorial">-</span></div>
+                </div>
+            </div>
+
+            <div id="endurance-banner" class="endurance-banner">ENDURANCE MODE: Every second counts!</div>
+
+            <div class="ui-mid-row">
+                <div class="ui-compact-line" id="difficulty-display"><span id="difficulty">1.0x</span></div>
+                <div id="streak-display" class="streak-row">
+                    Streak <span id="streak">0</span>
+                    <span id="streak-mult" class="streak-mult" aria-hidden="true"></span>
+                </div>
+                <div id="rush-display" class="status-pill rush-pill"><span class="rush-label">Rush</span> <span id="rush">Idle</span></div>
+            </div>
+
+            <hr class="ui-divider">
+
+            <div class="ui-chef-compact">
+                <div id="selected-chef"><span id="chef-info">Click a chef (1–5)</span></div>
+                <div id="held-item">Hold: <span id="item-info">-</span></div>
+                <div id="boost-status">Boost: <span id="boost-info">-</span></div>
+            </div>
+
             <details class="controls-details">
                 <summary class="controls-summary">Controls <span class="controls-chevron" aria-hidden="true">▸</span></summary>
                 <div class="controls-help">
@@ -40,120 +63,218 @@
                     <div>B to boost selected chef</div>
                 </div>
             </details>
-            <hr>
+
+            <hr class="ui-divider">
+
             <div class="game-actions">
-                <button type="button" id="start-btn" class="btn-start">Start Game</button>
+                <button type="button" id="start-btn" class="btn-start">Start game</button>
                 <button type="button" id="pause-btn" class="btn-pause" disabled>Pause</button>
             </div>
-        </div>
-        
+        </aside>
+
         <div id="main-game">
             <canvas id="game-canvas"></canvas>
-            
             <div id="legend">
-                <span class="legend-item"><span class="legend-swatch" style="background:#5d4037" title="Matches bins on map"></span><span>Bins</span></span>
-                <span class="legend-item"><span class="legend-swatch" style="background:#bf360c" title="Matches stoves"></span><span>Stoves</span></span>
-                <span class="legend-item"><span class="legend-swatch" style="background:#8d6e63" title="Matches cutting boards"></span><span>Cutting</span></span>
-                <span class="legend-item"><span class="legend-swatch" style="background:#1565c0" title="Matches plating"></span><span>Plating</span></span>
-                <span class="legend-item"><span class="legend-swatch" style="background:#6a1b9a" title="Matches service stands"></span><span>Service</span></span>
+                <span class="legend-item"><img class="legend-icon" src="assets/skins/stations/ingredient-bin.png" alt="Bins"><span>Bins</span></span>
+                <span class="legend-item"><img class="legend-icon" src="assets/skins/stations/stove.png" alt="Stoves"><span>Stoves</span></span>
+                <span class="legend-item"><img class="legend-icon" src="assets/skins/stations/cutting-board.png" alt="Cutting"><span>Cutting</span></span>
+                <span class="legend-item"><img class="legend-icon" src="assets/skins/stations/plating-area.png" alt="Plating"><span>Plating</span></span>
+                <span class="legend-item"><img class="legend-icon" src="assets/skins/stations/dish-rack.png" alt="Dish Rack"><span>Dish Rack</span></span>
+                <span class="legend-item"><img class="legend-icon" src="assets/skins/stations/sink.png" alt="Sink"><span>Sink</span></span>
+                <span class="legend-item"><img class="legend-icon" src="assets/skins/stations/trash.png" alt="Trash"><span>Trash</span></span>
+                <span class="legend-item"><img class="legend-icon" src="assets/skins/stations/reception-stand.png" alt="Service"><span>Service</span></span>
             </div>
         </div>
-        
+
         <div id="orders-panel">
             <h3>Orders</h3>
-            <div id="orders-stats" class="orders-stats"></div>
+            <div id="orders-stats" class="orders-stats-row" aria-live="polite">
+                <span class="stat-pill stat-delivered">Delivered <span id="stat-delivered">0</span></span>
+                <span class="stat-pill stat-failed">Failed <span id="stat-failed">0</span></span>
+                <span class="stat-pill stat-active">Active <span id="stat-active">0</span></span>
+            </div>
             <div id="orders-list"></div>
         </div>
     </div>
-    
+
+    <div id="bottom-row">
+    <aside id="leaderboard-panel">
+        <h3>Top Scores</h3>
+        <div id="side-lb-list"><div class="orders-empty">Loading…</div></div>
+    </aside>
     <div id="recipes-panel">
         <h3>How to make each dish</h3>
         <div class="recipe-grid">
             <div class="recipe-row recipe-row--4">
-            <div class="recipe-card">
-                <div class="recipe-title">🥗 Salad</div>
-                <div class="recipe-steps">
-                    1. Get <b>Lettuce</b> → Cutting Board → Plate<br>
-                    2. Get <b>Tomato</b> → Cutting Board → Plate<br>
-                    3. Pick up plate → Deliver to customer
+
+            <div class="recipe-card" data-difficulty="1">
+                <div class="recipe-card-head">
+                    <div class="recipe-title-group">
+                        <img class="recipe-dish-icon" src="assets/skins/orders/salad.png" alt="Salad">
+                        <span class="recipe-title">Salad</span>
+                    </div>
+                    <span class="recipe-difficulty">Easy</span>
                 </div>
+                <ol class="recipe-steps">
+                    <li>Get <strong>Lettuce</strong> → <img class="step-icon" src="assets/skins/stations/cutting-board.png" alt="cut"> → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Get <strong>Tomato</strong> → <img class="step-icon" src="assets/skins/stations/cutting-board.png" alt="cut"> → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Deliver plate → <img class="step-icon" src="assets/skins/stations/reception-stand.png" alt="serve"></li>
+                </ol>
             </div>
-            <div class="recipe-card">
-                <div class="recipe-title">🥩 Steak</div>
-                <div class="recipe-steps">
-                    1. Get <b>Meat</b> → Stove (wait for green)<br>
-                    2. Pick up cooked meat → Plate<br>
-                    3. Pick up plate → Deliver to customer
+
+            <div class="recipe-card" data-difficulty="1">
+                <div class="recipe-card-head">
+                    <div class="recipe-title-group">
+                        <img class="recipe-dish-icon" src="assets/skins/orders/steak.png" alt="Steak">
+                        <span class="recipe-title">Steak</span>
+                    </div>
+                    <span class="recipe-difficulty">Easy</span>
                 </div>
+                <ol class="recipe-steps">
+                    <li>Get <strong>Meat</strong> → <img class="step-icon" src="assets/skins/stations/stove.png" alt="stove"> cook until green</li>
+                    <li>Cooked meat → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Deliver plate → <img class="step-icon" src="assets/skins/stations/reception-stand.png" alt="serve"></li>
+                </ol>
             </div>
-            <div class="recipe-card">
-                <div class="recipe-title">🍔 Burger</div>
-                <div class="recipe-steps">
-                    1. Get <b>Meat</b> → Stove (wait for green)<br>
-                    2. Get <b>Dough</b> (bun) → Plate<br>
-                    3. Pick up cooked meat → Plate<br>
-                    4. Pick up plate → Deliver to customer
+
+            <div class="recipe-card" data-difficulty="2">
+                <div class="recipe-card-head">
+                    <div class="recipe-title-group">
+                        <img class="recipe-dish-icon" src="assets/skins/orders/burger.png" alt="Burger">
+                        <span class="recipe-title">Burger</span>
+                    </div>
+                    <span class="recipe-difficulty">Medium</span>
                 </div>
+                <ol class="recipe-steps">
+                    <li>Get <strong>Meat</strong> → <img class="step-icon" src="assets/skins/stations/stove.png" alt="stove"> cook until green</li>
+                    <li>Get <strong>Dough</strong> (bun) → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Cooked meat → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Deliver plate → <img class="step-icon" src="assets/skins/stations/reception-stand.png" alt="serve"></li>
+                </ol>
             </div>
-            <div class="recipe-card">
-                <div class="recipe-title">🍕 Pizza</div>
-                <div class="recipe-steps">
-                    1. Get <b>Dough</b> → Stove (wait for green)<br>
-                    2. Get <b>Tomato</b> → Cutting Board → Plate<br>
-                    3. Get <b>Cheese</b> → Plate<br>
-                    4. Pick up cooked dough → Plate<br>
-                    5. Pick up plate → Deliver to customer
+
+            <div class="recipe-card" data-difficulty="3">
+                <div class="recipe-card-head">
+                    <div class="recipe-title-group">
+                        <img class="recipe-dish-icon" src="assets/skins/orders/pizza.png" alt="Pizza">
+                        <span class="recipe-title">Pizza</span>
+                    </div>
+                    <span class="recipe-difficulty">Hard</span>
                 </div>
+                <ol class="recipe-steps">
+                    <li>Get <strong>Dough</strong> → <img class="step-icon" src="assets/skins/stations/stove.png" alt="stove"> cook until green</li>
+                    <li>Get <strong>Tomato</strong> → <img class="step-icon" src="assets/skins/stations/cutting-board.png" alt="cut"> → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Get <strong>Cheese</strong> → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Cooked dough → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Deliver plate → <img class="step-icon" src="assets/skins/stations/reception-stand.png" alt="serve"></li>
+                </ol>
             </div>
+
             </div>
             <div class="recipe-row recipe-row--3">
-            <div class="recipe-card">
-                <div class="recipe-title">🍔✨ Deluxe Burger</div>
-                <div class="recipe-steps">
-                    1. Get <b>Meat</b> → Stove (wait for green)<br>
-                    2. Get <b>Onion</b> → Cutting Board → Plate<br>
-                    3. Get <b>Dough</b> (bun) → Plate<br>
-                    4. Pick up cooked meat → Plate<br>
-                    5. Pick up plate → Deliver to customer
+
+            <div class="recipe-card" data-difficulty="3">
+                <div class="recipe-card-head">
+                    <div class="recipe-title-group">
+                        <img class="recipe-dish-icon" src="assets/skins/orders/deluxe-burger.png" alt="Deluxe Burger">
+                        <span class="recipe-title">Deluxe Burger</span>
+                    </div>
+                    <span class="recipe-difficulty">Hard</span>
                 </div>
+                <ol class="recipe-steps">
+                    <li>Get <strong>Meat</strong> → <img class="step-icon" src="assets/skins/stations/stove.png" alt="stove"> cook until green</li>
+                    <li>Get <strong>Onion</strong> → <img class="step-icon" src="assets/skins/stations/cutting-board.png" alt="cut"> → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Get <strong>Dough</strong> (bun) → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Cooked meat → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Deliver plate → <img class="step-icon" src="assets/skins/stations/reception-stand.png" alt="serve"></li>
+                </ol>
             </div>
-            <div class="recipe-card">
-                <div class="recipe-title">🍱 Feast Platter</div>
-                <div class="recipe-steps">
-                    1. Get <b>Meat</b> → Stove (wait for green)<br>
-                    2. Get <b>Lettuce</b> → Cutting Board → Plate<br>
-                    3. Get <b>Tomato</b> → Cutting Board → Plate<br>
-                    4. Get <b>Cheese</b> → Plate<br>
-                    5. Pick up plate → Deliver to customer
+
+            <div class="recipe-card" data-difficulty="4">
+                <div class="recipe-card-head">
+                    <div class="recipe-title-group">
+                        <img class="recipe-dish-icon" src="assets/skins/orders/feast-platter.png" alt="Feast Platter">
+                        <span class="recipe-title">Feast Platter</span>
+                    </div>
+                    <span class="recipe-difficulty">Expert</span>
                 </div>
+                <ol class="recipe-steps">
+                    <li>Get <strong>Meat</strong> → <img class="step-icon" src="assets/skins/stations/stove.png" alt="stove"> cook until green</li>
+                    <li>Get <strong>Lettuce</strong> → <img class="step-icon" src="assets/skins/stations/cutting-board.png" alt="cut"> → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Get <strong>Tomato</strong> → <img class="step-icon" src="assets/skins/stations/cutting-board.png" alt="cut"> → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Get <strong>Cheese</strong> → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Deliver plate → <img class="step-icon" src="assets/skins/stations/reception-stand.png" alt="serve"></li>
+                </ol>
             </div>
-            <div class="recipe-card">
-                <div class="recipe-title">🍕✨ Supreme Pizza</div>
-                <div class="recipe-steps">
-                    1. Get <b>Dough</b> → Stove (wait for green)<br>
-                    2. Get <b>Tomato</b> → Cutting Board → Plate<br>
-                    3. Get <b>Onion</b> → Cutting Board → Plate<br>
-                    4. Get <b>Cheese</b> → Plate<br>
-                    5. Pick up cooked dough → Plate<br>
-                    6. Pick up plate → Deliver to customer
+
+            <div class="recipe-card" data-difficulty="4">
+                <div class="recipe-card-head">
+                    <div class="recipe-title-group">
+                        <img class="recipe-dish-icon" src="assets/skins/orders/supreme-pizza.png" alt="Supreme Pizza">
+                        <span class="recipe-title">Supreme Pizza</span>
+                    </div>
+                    <span class="recipe-difficulty">Expert</span>
                 </div>
+                <ol class="recipe-steps">
+                    <li>Get <strong>Dough</strong> → <img class="step-icon" src="assets/skins/stations/stove.png" alt="stove"> cook until green</li>
+                    <li>Get <strong>Tomato</strong> → <img class="step-icon" src="assets/skins/stations/cutting-board.png" alt="cut"> → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Get <strong>Onion</strong> → <img class="step-icon" src="assets/skins/stations/cutting-board.png" alt="cut"> → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Get <strong>Cheese</strong> → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Cooked dough → <img class="step-icon" src="assets/skins/stations/plating-area.png" alt="plate"></li>
+                    <li>Deliver plate → <img class="step-icon" src="assets/skins/stations/reception-stand.png" alt="serve"></li>
+                </ol>
             </div>
+
             </div>
         </div>
         <div class="tips">
-            <b>💡 Tips:</b> Stove progress bar turns <span style="color:#4caf50">green</span> when ready. 
-            Pick up before it turns <span style="color:#f44336">red</span> (burnt)!
+            <b>Tips:</b> Stove progress bar turns <span class="tip-ok">green</span> when ready.
+            Pick up before it turns <span class="tip-bad">red</span> (burnt)!
             Items on plating area combine into a dish.
         </div>
     </div>
-    
-    <div id="game-over" class="hidden">
-        <h1>🎮 Game Over!</h1>
-        <p>Final Score: <span id="final-score">0</span></p>
-        <p>Best Streak: <span id="best-streak">0</span></p>
-        <button id="restart-btn">🔄 Play Again</button>
     </div>
-    
+
+    <div id="game-over" class="hidden">
+        <div class="game-over-modal">
+            <h1>Game Over</h1>
+            <div class="game-over-grade-row">
+                <span id="final-grade" class="grade-letter grade-c">-</span>
+                <span class="grade-caption">Grade</span>
+            </div>
+            <ul class="game-over-stats">
+                <li>Score: <span id="final-score">0</span></li>
+                <li>Best streak: <span id="best-streak">0</span></li>
+                <li>Time survived: <span id="final-time">0:00</span></li>
+                <li>Orders delivered: <span id="final-delivered">0</span></li>
+                <li>Orders failed: <span id="final-failed">0</span></li>
+                <li>Difficulty reached: <span id="final-difficulty">1.0</span>x</li>
+            </ul>
+            <hr class="game-over-hr">
+            <div class="game-over-submit-placeholder">
+                <label class="sr-only" for="leaderboard-email">Email</label>
+                <input type="email" id="leaderboard-email" class="leaderboard-handle-input" placeholder="your@email.com">
+                <p class="leaderboard-email-hint">Used for the global leaderboard. Pre-filled by HT6 Auth when available.</p>
+                <button type="button" id="submit-score-btn" class="small-btn">Submit to leaderboard</button>
+                <div id="run-receipt" class="leaderboard-receipt"></div>
+                <div id="leaderboard-status" class="leaderboard-status"></div>
+                <div class="lb-header" style="margin-top:12px;">Top Scores</div>
+                <div id="leaderboard-list" class="leaderboard-list"></div>
+            </div>
+            <div class="game-over-actions">
+                <button type="button" id="share-btn" class="btn-share">Share</button>
+                <button type="button" id="restart-btn" class="btn-restart">Play again</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        // Replace these with your Supabase project values before deploying.
+        // These are the public anon credentials, safe to commit.
+        const SUPABASE_URL = 'https://mfzeuewcworqkyfkwuhc.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_pjw4L62eQVrcFRi8Xlmsew_ai_86tND';
+    </script>
     <script src="game.js"></script>
 </body>
 </html>
