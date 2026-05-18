@@ -96,6 +96,15 @@ function smoothstep01(x, edge0, edge1) {
     return t * t * (3 - 2 * t);
 }
 
+function getPerformanceAdjustment() {
+    const delivered = GameState.ordersDelivered;
+    const failed = GameState.failedOrders;
+    const successRate = delivered + failed > 0 ? delivered / (delivered + failed) : 0.6;
+    const streakBonus = Math.min(0.2, GameState.streak * 0.01);
+    const failPenalty = Math.min(0.18, failed * 0.05);
+    return Math.max(-0.2, Math.min(0.3, (successRate - 0.55) * 0.28 + streakBonus - failPenalty));
+}
+
 /**
  * Graduated recipe pool so automation does not dump all expert dishes at 2:30.
  * endurance → null = full RECIPES table.
@@ -128,7 +137,8 @@ function baseOrderSpawnInterval(time, rushActive) {
         if (time >= 600) normal *= 0.9;
     }
     if (rushActive) normal *= 0.52;
-    return Math.max(2.75, normal);
+    const perf = getPerformanceAdjustment();
+    return Math.max(2.75, normal * (1 - perf * 0.35));
 }
 
 function orderTimeLimitForSpawn(time) {
@@ -146,22 +156,25 @@ function orderTimeLimitForSpawn(time) {
     }
     if (phase === 'endurance') sec -= 3;
     sec = Math.max(24, sec);
+    const perf = getPerformanceAdjustment();
+    sec = Math.round(sec * (1 - perf * 0.22));
     return sec + Math.floor(Math.random() * 5);
 }
 
 function computeDifficulty(time) {
     const phase = getPhaseKey(time);
+    let base;
     if (phase === 'tutorial') {
-        return 1.0 + smoothstep01(time, 0, 58) * 0.12;
+        base = 1.0 + smoothstep01(time, 0, 58) * 0.14;
+    } else if (phase === 'ramp') {
+        base = 1.14 + smoothstep01(time, 60, 148) * 0.44;
+    } else if (phase === 'automation') {
+        base = 1.58 + smoothstep01(time, 150, 595) * 1.16;
+    } else {
+        const d600 = 1.58 + 1.16;
+        base = d600 + (time - 600) * 0.0032;
     }
-    if (phase === 'ramp') {
-        return 1.12 + smoothstep01(time, 60, 148) * 0.38;
-    }
-    if (phase === 'automation') {
-        return 1.5 + smoothstep01(time, 150, 595) * 1.05;
-    }
-    const d600 = 1.5 + 1.05;
-    return d600 + (time - 600) * 0.0028;
+    return Math.max(1.0, base * (1 + getPerformanceAdjustment()));
 }
 
 // =============================================
@@ -200,14 +213,127 @@ const COLORS = {
     burnt: '#222'
 };
 
-const INGREDIENT_BIN_EMOJI = {
-    tomato: '🍅',
-    lettuce: '🥬',
-    onion: '🧅',
-    meat: '🥩',
-    dough: '🍞',
-    cheese: '🧀'
+const INGREDIENT_ICONS = {
+    tomato: 'TM',
+    lettuce: 'LT',
+    onion: 'ON',
+    meat: 'MT',
+    dough: 'DG',
+    cheese: 'CH'
 };
+
+const RECIPE_ICON_BY_NAME = {
+    Salad: 'SAL',
+    Burger: 'BRG',
+    Steak: 'STK',
+    Pizza: 'PZZ',
+    'Deluxe Burger': 'DBR',
+    'Feast Platter': 'FST',
+    'Supreme Pizza': 'SPZ'
+};
+
+const SKIN_SOURCES = {
+    ingredient: {
+        tomato: 'assets/skins/ingredients/tomato.png',
+        lettuce: 'assets/skins/ingredients/lettuce.png',
+        onion: 'assets/skins/ingredients/onion.png',
+        meat: 'assets/skins/ingredients/meat.png',
+        dough: 'assets/skins/ingredients/dough.png',
+        cheese: 'assets/skins/ingredients/cheese.png'
+    },
+    chef: ['assets/skins/chefs/chef-1.png', 'assets/skins/chefs/chef-2.png', 'assets/skins/chefs/chef-3.png', 'assets/skins/chefs/chef-4.png', 'assets/skins/chefs/chef-5.png'],
+    station: {
+        stove: 'assets/skins/stations/stove.png',
+        cuttingBoard: 'assets/skins/stations/cutting-board.png',
+        platingArea: 'assets/skins/stations/plating-area.png',
+        dishRack: 'assets/skins/stations/dish-rack.png',
+        sink: 'assets/skins/stations/sink.png',
+        trash: 'assets/skins/stations/trash.png',
+        receptionStand: 'assets/skins/stations/reception-stand.png',
+        counter: 'assets/skins/stations/counter.png',
+        ingredientBin: 'assets/skins/stations/ingredient-bin.png'
+    },
+    order: {
+        Salad: 'assets/skins/orders/salad.png',
+        Burger: 'assets/skins/orders/burger.png',
+        Steak: 'assets/skins/orders/steak.png',
+        Pizza: 'assets/skins/orders/pizza.png',
+        'Deluxe Burger': 'assets/skins/orders/deluxe-burger.png',
+        'Feast Platter': 'assets/skins/orders/feast-platter.png',
+        'Supreme Pizza': 'assets/skins/orders/supreme-pizza.png'
+    }
+};
+
+const SkinStore = (() => {
+    const images = new Map();
+    function load(path) {
+        const img = new Image();
+        img.src = path;
+        images.set(path, { img, loaded: false });
+        img.onload = () => {
+            const e = images.get(path);
+            if (e) e.loaded = true;
+        };
+        img.onerror = () => images.delete(path);
+    }
+    function flattenPaths() {
+        const all = [];
+        Object.values(SKIN_SOURCES.ingredient).forEach(p => all.push(p));
+        SKIN_SOURCES.chef.forEach(p => all.push(p));
+        Object.values(SKIN_SOURCES.station).forEach(p => all.push(p));
+        Object.values(SKIN_SOURCES.order).forEach(p => all.push(p));
+        return all;
+    }
+    function init() {
+        flattenPaths().forEach(load);
+    }
+    function draw(path, x, y, w, h) {
+        const entry = images.get(path);
+        if (!entry || !entry.loaded) return false;
+        ctx.drawImage(entry.img, x, y, w, h);
+        return true;
+    }
+    return { init, draw };
+})();
+
+const ScoreGuard = (() => {
+    const secret = Math.random().toString(36).slice(2) + '-' + Date.now().toString(36);
+    let authoritativeScore = 0;
+    let eventChain = 2166136261;
+    let events = 0;
+    function hashStep(str) {
+        let h = eventChain;
+        const source = str + '|' + secret;
+        for (let i = 0; i < source.length; i++) {
+            h ^= source.charCodeAt(i);
+            h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+        }
+        eventChain = h >>> 0;
+        return eventChain;
+    }
+    function reset() {
+        authoritativeScore = 0;
+        eventChain = 2166136261;
+        events = 0;
+        hashStep('reset');
+    }
+    function applyDelta(delta, reason) {
+        authoritativeScore += delta;
+        events++;
+        hashStep(`${reason}|${Math.round(delta)}|${Math.round(authoritativeScore)}`);
+        GameState.score = authoritativeScore;
+    }
+    function tick(time) {
+        hashStep(`tick|${Math.floor(time)}|${Math.floor(authoritativeScore)}|${GameState.ordersDelivered}|${GameState.failedOrders}`);
+    }
+    function verifyFinal() {
+        return GameState.score === authoritativeScore && events > 0;
+    }
+    function receipt() {
+        return `${eventChain.toString(16)}-${events.toString(36)}`;
+    }
+    return { reset, applyDelta, tick, verifyFinal, receipt };
+})();
 
 function floorFillColor(x, y) {
     const light = (x + y) % 2 === 0;
@@ -261,12 +387,12 @@ function standNumberFromStandId(standId) {
 const INGREDIENTS = ['tomato', 'lettuce', 'onion', 'meat', 'dough', 'cheese'];
 
 const INGREDIENT_NAMES = {
-    tomato: '🍅 Tomato',
-    lettuce: '🥬 Lettuce', 
-    onion: '🧅 Onion',
-    meat: '🥩 Meat',
-    dough: '🍞 Dough',
-    cheese: '🧀 Cheese'
+    tomato: 'Tomato',
+    lettuce: 'Lettuce',
+    onion: 'Onion',
+    meat: 'Meat',
+    dough: 'Dough',
+    cheese: 'Cheese'
 };
 
 const INGREDIENT_STATES = {
@@ -278,7 +404,7 @@ const INGREDIENT_STATES = {
 
 const RECIPES = {
     'Salad': {
-        emoji: '🥗',
+        icon: 'SAL',
         steps: ['chop_lettuce', 'chop_tomato'],
         components: [
             { ingredient: 'lettuce', state: 'chopped' },
@@ -288,7 +414,7 @@ const RECIPES = {
         instructions: '1. Chop Lettuce\n2. Chop Tomato\n3. Plate both'
     },
     'Burger': {
-        emoji: '🍔',
+        icon: 'BRG',
         steps: ['cook_meat', 'plate_with_bun'],
         components: [
             { ingredient: 'meat', state: 'cooked' },
@@ -298,7 +424,7 @@ const RECIPES = {
         instructions: '1. Cook Meat on Stove\n2. Get Dough (bun)\n3. Plate both'
     },
     'Steak': {
-        emoji: '🥩',
+        icon: 'STK',
         steps: ['cook_meat'],
         components: [
             { ingredient: 'meat', state: 'cooked' }
@@ -307,7 +433,7 @@ const RECIPES = {
         instructions: '1. Cook Meat on Stove\n2. Plate when ready'
     },
     'Pizza': {
-        emoji: '🍕',
+        icon: 'PZZ',
         steps: ['cook_dough', 'add_cheese', 'add_tomato'],
         components: [
             { ingredient: 'dough', state: 'cooked' },
@@ -318,7 +444,7 @@ const RECIPES = {
         instructions: '1. Cook Dough on Stove\n2. Chop Tomato\n3. Get Cheese\n4. Plate all three'
     },
     'Deluxe Burger': {
-        emoji: '🍔✨',
+        icon: 'DBR',
         steps: ['chop_onion', 'cook_meat', 'plate_all'],
         components: [
             { ingredient: 'meat', state: 'cooked' },
@@ -329,7 +455,7 @@ const RECIPES = {
         instructions: '1. Chop Onion\n2. Cook Meat\n3. Get Dough\n4. Plate all three'
     },
     'Feast Platter': {
-        emoji: '🍱',
+        icon: 'FST',
         steps: ['cook_meat', 'chop_lettuce', 'chop_tomato', 'cheese_plate'],
         components: [
             { ingredient: 'meat', state: 'cooked' },
@@ -341,7 +467,7 @@ const RECIPES = {
         instructions: '1. Cook Meat\n2. Chop Lettuce & Tomato\n3. Add Cheese on plate\n4. Deliver'
     },
     'Supreme Pizza': {
-        emoji: '🍕✨',
+        icon: 'SPZ',
         steps: ['cook_dough', 'chop_tomato', 'chop_onion', 'cheese_plate'],
         components: [
             { ingredient: 'dough', state: 'cooked' },
@@ -586,7 +712,7 @@ function standFreeForOrder(s) {
 
 function failOrderNoStandSlot() {
     GameState.failedOrders++;
-    GameState.score -= 50;
+    ScoreGuard.applyDelta(-50, 'no-stand-slot');
     GameState.streak = 0;
     showFloatingText(10, 7, 'No room! Order lost!', '#f44336', { fontSize: 22, life: 3, maxLife: 3, drift: 0 });
 }
@@ -619,7 +745,7 @@ function spawnOrder() {
     const order = {
         id: orderIdCounter++,
         dish: dishName,
-        emoji: recipe.emoji,
+        icon: recipe.icon || RECIPE_ICON_BY_NAME[dishName] || 'ORD',
         recipe: recipe,
         timeLeft: vip ? Math.floor(timeLimit * 0.85) : timeLimit,
         maxTime: vip ? Math.floor(timeLimit * 0.85) : timeLimit,
@@ -820,7 +946,7 @@ function interactWithStation(chef, stationInfo) {
                     if (chef.holding.type === 'plate' && top.type !== 'plate') {
                         chef.holding.items.push(top);
                         station.items.pop();
-                        showFloatingText(station.x, station.y, `🍽️ Combined on plate: ${plateSummary(chef.holding)}`, '#4caf50');
+                        showFloatingText(station.x, station.y, `PLATE Combined: ${plateSummary(chef.holding)}`, '#4caf50');
                         return;
                     }
 
@@ -832,7 +958,7 @@ function interactWithStation(chef, stationInfo) {
                 // Empty counter: place item
                 station.items.push(chef.holding);
                 if (chef.holding.type === 'plate') {
-                    showFloatingText(station.x, station.y, `🍽️ Plate placed: ${plateSummary(chef.holding)}`, '#ffd54f');
+                    showFloatingText(station.x, station.y, `PLATE placed: ${plateSummary(chef.holding)}`, '#ffd54f');
                 } else {
                     showFloatingText(station.x, station.y, `Placed ${chef.holding.ingredient}`, '#ffd54f');
                 }
@@ -856,7 +982,7 @@ function interactWithStation(chef, stationInfo) {
                 if (station.count > 0) {
                     chef.holding = { type: 'plate', items: [], dirty: false };
                     station.count -= 1;
-                    showFloatingText(chef.x, chef.y, 'Picked up clean plate 🍽️', '#fff');
+                    showFloatingText(chef.x, chef.y, 'Picked up clean plate', '#fff');
                 } else if (station.dirty && station.dirty > 0) {
                     // Pick up a dirty plate from the rack to bring to sink
                     chef.holding = { type: 'plate', items: [], dirty: true };
@@ -916,7 +1042,7 @@ function interactWithStation(chef, stationInfo) {
                 chef.busy = true;
                 chef.actionTimer = station.maxProcessTime;
                 chef.waitingAt = station;
-                showFloatingText(station.x, station.y, '🔪 Chopping...', '#fff');
+                showFloatingText(station.x, station.y, 'Chopping...', '#fff');
             }
             break;
             
@@ -931,7 +1057,7 @@ function interactWithStation(chef, stationInfo) {
                         ? INGREDIENT_STATES.BURNT 
                         : INGREDIENT_STATES.COOKED;
                     
-                    const msg = chef.holding.state === INGREDIENT_STATES.BURNT ? '💨 Burnt!' : '✓ Cooked!';
+                    const msg = chef.holding.state === INGREDIENT_STATES.BURNT ? 'Burnt!' : 'Cooked!';
                     const color = chef.holding.state === INGREDIENT_STATES.BURNT ? '#f44336' : '#4caf50';
                     showFloatingText(chef.x, chef.y, msg, color);
                     
@@ -948,7 +1074,7 @@ function interactWithStation(chef, stationInfo) {
                 chef.busy = true;
                 chef.actionTimer = station.maxCookTime; // Wait for cooking
                 chef.waitingAtStove = station;
-                showFloatingText(station.x, station.y, '🔥 Cooking...', '#ff9800');
+                showFloatingText(station.x, station.y, 'Cooking...', '#ff9800');
             }
             break;
 
@@ -974,7 +1100,7 @@ function interactWithStation(chef, stationInfo) {
             if (chef.holding && chef.holding.type !== 'plate') {
                 // Restriction: no serving raw meat directly to plating
                 if (chef.holding.ingredient === 'meat' && chef.holding.state === INGREDIENT_STATES.RAW) {
-                    showFloatingText(station.x, station.y, 'No serving raw meat! 🔥 Cook it first.', '#ffb74d');
+                    showFloatingText(station.x, station.y, 'No serving raw meat! Cook it first.', '#ffb74d');
                     return;
                 }
                 // If plating area already has a plate, add ingredient to that plate
@@ -1001,12 +1127,12 @@ function interactWithStation(chef, stationInfo) {
                     } else {
                         chef.holding.items = chef.holding.items.concat(station.items);
                         station.items = [];
-                        showFloatingText(station.x, station.y, `🍽️ Combined: ${plateSummary(chef.holding)}`, '#4caf50');
+                        showFloatingText(station.x, station.y, `PLATE Combined: ${plateSummary(chef.holding)}`, '#4caf50');
                     }
                 } else {
                     // Empty plating area: place plate as an item
                     station.items.push(chef.holding);
-                    showFloatingText(station.x, station.y, `🍽️ Plate placed: ${plateSummary(chef.holding)}`, '#ffd54f');
+                    showFloatingText(station.x, station.y, `PLATE placed: ${plateSummary(chef.holding)}`, '#ffd54f');
                     chef.holding = null;
                 }
 
@@ -1020,7 +1146,7 @@ function interactWithStation(chef, stationInfo) {
                     // If there are raw ingredients on the plating area, picking them up yields a plate with those items
                     chef.holding = { type: 'plate', items: [...station.items] };
                     station.items = [];
-                    showFloatingText(chef.x, chef.y, `🍽️ Plate ready: ${plateSummary(chef.holding)}`, '#2196f3');
+                    showFloatingText(chef.x, chef.y, `PLATE ready: ${plateSummary(chef.holding)}`, '#2196f3');
                 }
             }
             break;
@@ -1034,7 +1160,7 @@ function interactWithStation(chef, stationInfo) {
                     const streakMultiplier = 1 + Math.min(1.0, GameState.streak * 0.05);
                     const vipMultiplier = station.order.vip ? 1.5 : 1;
                     const totalScore = Math.floor((baseScore + timeBonus) * streakMultiplier * vipMultiplier);
-                    GameState.score += totalScore;
+                    ScoreGuard.applyDelta(totalScore, 'delivery');
                     GameState.streak += 1;
                     GameState.bestStreak = Math.max(GameState.bestStreak, GameState.streak);
                     GameState.ordersDelivered += 1;
@@ -1058,7 +1184,7 @@ function interactWithStation(chef, stationInfo) {
                     });
                 } else {
                     EventBus.emit('orderFailed', { dish: station.order.dish });
-                    showFloatingText(station.x, station.y, '❌ Wrong dish!', '#f44336', { kind: 'error' });
+                    showFloatingText(station.x, station.y, 'Wrong dish!', '#f44336', { kind: 'error' });
                     GameState.streak = 0;
                 }
                 chef.holding = null;
@@ -1073,7 +1199,7 @@ function interactWithStation(chef, stationInfo) {
         case 'trash':
             if (chef.holding) {
                 chef.holding = null;
-                showFloatingText(chef.x, chef.y, '🗑️ Trashed', '#9e9e9e');
+                showFloatingText(chef.x, chef.y, 'Trashed', '#9e9e9e');
             }
             break;
     }
@@ -1176,7 +1302,7 @@ function drawFloatingTexts() {
         const w = metrics.width + padX * 2;
         const h = usePx + padY * 2;
         let bg = 'rgba(0,0,0,0.6)';
-        if (ft.kind === 'error' || (ft.text.includes('❌') && ft.color === '#f44336')) {
+        if (ft.kind === 'error' || (ft.text.includes('Wrong') && ft.color === '#f44336')) {
             bg = 'rgba(183, 28, 28, 0.88)';
         } else if (ft.kind === 'phase') {
             bg = 'rgba(0,0,0,0.75)';
@@ -1232,19 +1358,19 @@ function update(dt) {
 
     if (!GameState.phaseBanner60 && GameState.time >= 60) {
         GameState.phaseBanner60 = true;
-        showFloatingText(10, 7, '⚠️ PICKING UP THE PACE!', '#ffeb3b', { fontSize: 28, life: 3, maxLife: 3, drift: 0, kind: 'phase' });
+        showFloatingText(10, 7, 'PHASE UP: PICKING UP THE PACE!', '#ffeb3b', { fontSize: 28, life: 3, maxLife: 3, drift: 0, kind: 'phase' });
     }
     if (!GameState.phaseBanner150 && GameState.time >= 150) {
         GameState.phaseBanner150 = true;
-        showFloatingText(10, 7, '🤖 CAN YOU KEEP UP?', '#f44336', { fontSize: 28, life: 3, maxLife: 3, drift: 0, kind: 'phase' });
+        showFloatingText(10, 7, 'AUTOMATION CHECK: KEEP UP!', '#f44336', { fontSize: 28, life: 3, maxLife: 3, drift: 0, kind: 'phase' });
     }
     if (!GameState.phaseBanner600Float && GameState.time >= 600) {
         GameState.phaseBanner600Float = true;
-        showFloatingText(10, 7, '🏆 ENDURANCE MODE', '#ffc107', { fontSize: 28, life: 4, maxLife: 4, drift: 0, kind: 'phase' });
+        showFloatingText(10, 7, 'ENDURANCE MODE', '#ffc107', { fontSize: 28, life: 4, maxLife: 4, drift: 0, kind: 'phase' });
     }
 
     if (GameState.time >= 600) {
-        GameState.score += dt * GameState.difficulty;
+        ScoreGuard.applyDelta(dt * GameState.difficulty, 'endurance-tick');
     }
 
     const phase = getPhaseKey(GameState.time);
@@ -1306,6 +1432,7 @@ function update(dt) {
     }
 
     EventBus.emit('tick', { dt, time: GameState.time });
+    ScoreGuard.tick(GameState.time);
     
     // Update UI
     updateUI();
@@ -1434,13 +1561,13 @@ function updateOrders(dt) {
             });
 
             GameState.failedOrders++;
-            GameState.score -= 50;
+            ScoreGuard.applyDelta(-50, 'order-expired');
             GameState.streak = 0;
             
             showFloatingText(
                 stations.receptionStands.find(s => s.order === expired)?.x || 17,
                 stations.receptionStands.find(s => s.order === expired)?.y || 6,
-                '⏰ Order expired!', '#f44336'
+                'Order expired!', '#f44336'
             );
             
             // Clear from stand
@@ -1561,7 +1688,7 @@ function drawStations() {
         const px = bin.x * CELL_SIZE;
         const py = bin.y * CELL_SIZE;
         const pad = 4;
-        const emoji = INGREDIENT_BIN_EMOJI[bin.ingredient] || '📦';
+        const icon = INGREDIENT_ICONS[bin.ingredient] || 'BIN';
 
         ctx.fillStyle = COLORS.ingredientBin;
         ctx.beginPath();
@@ -1586,11 +1713,12 @@ function drawStations() {
         ctx.roundRect(px + pad, py + pad, CELL_SIZE - pad * 2, CELL_SIZE - pad * 2, 6);
         ctx.stroke();
 
-        ctx.font = '22px system-ui, "Segoe UI", sans-serif';
+        const drewIngredientSkin = SkinStore.draw(SKIN_SOURCES.ingredient[bin.ingredient], px + 10, py + 10, CELL_SIZE - 20, CELL_SIZE - 20);
+        ctx.font = 'bold 11px system-ui, "Segoe UI", sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = '#fff';
-        ctx.fillText(emoji, px + CELL_SIZE / 2, py + CELL_SIZE / 2 + 2);
+        if (!drewIngredientSkin) ctx.fillText(icon, px + CELL_SIZE / 2, py + CELL_SIZE / 2 + 2);
     }
 
     for (const stove of stations.stoves) {
@@ -1794,7 +1922,7 @@ function drawStations() {
         ctx.font = '22px system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('💧', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+        ctx.fillText('SNK', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
     }
 
     for (const trash of stations.trashCans) {
@@ -1805,7 +1933,7 @@ function drawStations() {
         ctx.font = '24px system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('🗑️', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+        ctx.fillText('TRH', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
     }
 
     for (let si = 0; si < stations.receptionStands.length; si++) {
@@ -1843,7 +1971,8 @@ function drawStations() {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = '#fff';
-            ctx.fillText(stand.order.emoji || '🍽️', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+            const drewOrderSkin = SkinStore.draw(SKIN_SOURCES.order[stand.order.dish], px + 14, py + 14, CELL_SIZE - 28, CELL_SIZE - 28);
+            if (!drewOrderSkin) ctx.fillText(stand.order.icon || RECIPE_ICON_BY_NAME[stand.order.dish] || 'ORD', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
 
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 3;
@@ -2056,7 +2185,7 @@ function drawChef(chef) {
         ctx.font = '16px system-ui, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('⚡', cx, py + 6);
+        ctx.fillText('SPD', cx, py + 6);
     }
 
     if (GameState.selectedChef === chef.id) {
@@ -2096,6 +2225,62 @@ function drawLabels() {
 // UI UPDATES
 // =============================================
 let lastDisplayedStreak = 0;
+const LEADERBOARD_KEY = 'chefOverflowLeaderboardV1';
+
+function loadLeaderboard() {
+    try {
+        const raw = localStorage.getItem(LEADERBOARD_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveLeaderboard(entries) {
+    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(entries.slice(0, 10)));
+}
+
+function renderLeaderboard() {
+    const mount = document.getElementById('leaderboard-list');
+    if (!mount) return;
+    const entries = loadLeaderboard();
+    if (entries.length === 0) {
+        mount.innerHTML = '<div class="orders-empty">No verified runs yet.</div>';
+        return;
+    }
+    mount.innerHTML = entries.map((e, i) => {
+        return `<div class="lb-row"><span>#${i + 1} ${e.handle}</span><span>${e.score}</span></div>`;
+    }).join('');
+}
+
+function submitVerifiedScore() {
+    const statusEl = document.getElementById('leaderboard-status');
+    if (!statusEl) return;
+    if (!GameState.gameOver) {
+        statusEl.textContent = 'Finish the run before submitting.';
+        return;
+    }
+    if (!ScoreGuard.verifyFinal()) {
+        statusEl.textContent = 'Run rejected: score integrity check failed.';
+        return;
+    }
+    const input = document.getElementById('leaderboard-handle');
+    const handle = (input?.value || 'anonymous').trim().slice(0, 16) || 'anonymous';
+    const entries = loadLeaderboard();
+    entries.push({
+        handle,
+        score: Math.floor(GameState.score),
+        delivered: GameState.ordersDelivered,
+        time: Math.floor(GameState.time),
+        proof: ScoreGuard.receipt(),
+        at: Date.now()
+    });
+    entries.sort((a, b) => b.score - a.score);
+    saveLeaderboard(entries);
+    statusEl.textContent = 'Verified score submitted.';
+    renderLeaderboard();
+}
 
 function updateUI() {
     document.getElementById('score').textContent = Math.floor(GameState.score);
@@ -2115,7 +2300,7 @@ function updateUI() {
     }
 
     document.getElementById('difficulty').textContent =
-        `${GameState.difficulty.toFixed(1)}x · ${phaseLabels[apiPhase]} | ❌ ${GameState.failedOrders}/${GameState.maxFailedOrders}`;
+        `${GameState.difficulty.toFixed(1)}x · ${phaseLabels[apiPhase]} | FAIL ${GameState.failedOrders}/${GameState.maxFailedOrders}`;
 
     const endBanner = document.getElementById('endurance-banner');
     if (endBanner) {
@@ -2173,16 +2358,16 @@ function updateUI() {
         if (chef.holding) {
             if (chef.holding.type === 'plate') {
                 const items = chef.holding.items.map(i => i.ingredient).join(', ');
-                document.getElementById('item-info').textContent = `🍽️ ${items}`;
+                document.getElementById('item-info').textContent = `PLATE ${items}`;
             } else {
-                const stateEmoji = {
-                    raw: '🥬',
-                    chopped: '🔪',
-                    cooked: '🔥',
-                    burnt: '💨'
+                const stateLabel = {
+                    raw: 'RAW',
+                    chopped: 'CHOP',
+                    cooked: 'COOK',
+                    burnt: 'BURN'
                 };
                 document.getElementById('item-info').textContent =
-                    `${stateEmoji[chef.holding.state]} ${chef.holding.state} ${chef.holding.ingredient}`;
+                    `${stateLabel[chef.holding.state]} ${chef.holding.state} ${chef.holding.ingredient}`;
             }
         } else {
             document.getElementById('item-info').textContent = 'Empty hands';
@@ -2225,7 +2410,7 @@ function updateUI() {
         titleWrap.className = 'order-title-wrap';
         const emojiSpan = document.createElement('span');
         emojiSpan.className = 'order-emoji';
-        emojiSpan.textContent = order.emoji || '🍽️';
+        emojiSpan.textContent = order.icon || RECIPE_ICON_BY_NAME[order.dish] || 'ORD';
         const nameSpan = document.createElement('span');
         nameSpan.className = 'order-name';
         nameSpan.textContent = order.dish + (order.vip ? ' ' : '');
@@ -2234,7 +2419,7 @@ function updateUI() {
         if (order.vip) {
             const vip = document.createElement('span');
             vip.className = 'vip-star';
-            vip.textContent = '⭐';
+            vip.textContent = 'VIP';
             titleWrap.appendChild(vip);
         }
         const standBadge = document.createElement('span');
@@ -2250,7 +2435,7 @@ function updateUI() {
             const chip = document.createElement('span');
             const processed = c.state === 'chopped' || c.state === 'cooked' || c.state === 'burnt';
             chip.className = 'order-chip' + (processed ? ' chip-processed' : ' chip-raw');
-            const em = INGREDIENT_BIN_EMOJI[c.ingredient] || '•';
+            const em = INGREDIENT_ICONS[c.ingredient] || '•';
             chip.textContent = `${em} ${c.state}`;
             chips.appendChild(chip);
         }
@@ -2359,7 +2544,7 @@ function tryBoostChef(chef) {
     chef.boostActive = true;
     chef.boostTime = 3.5;
     chef.boostCooldown = 12;
-    showFloatingText(chef.x, chef.y, '⚡ Boost!', '#ffd54f');
+    showFloatingText(chef.x, chef.y, 'Speed boost!', '#ffd54f');
     return { success: true };
 }
 
@@ -2379,6 +2564,7 @@ function startGame() {
     GameState.gameOver = false;
     GameState.time = 0;
     GameState.score = 0;
+    ScoreGuard.reset();
     GameState.difficulty = 1.0;
     GameState.streak = 0;
     GameState.bestStreak = 0;
@@ -2462,6 +2648,15 @@ function endGame() {
     if (ff) ff.textContent = String(GameState.failedOrders);
     const fdiff = document.getElementById('final-difficulty');
     if (fdiff) fdiff.textContent = GameState.difficulty.toFixed(1);
+    const receipt = document.getElementById('run-receipt');
+    if (receipt) {
+        receipt.textContent = ScoreGuard.verifyFinal()
+            ? `Run proof: ${ScoreGuard.receipt()}`
+            : 'Run proof: INVALID';
+    }
+    const status = document.getElementById('leaderboard-status');
+    if (status) status.textContent = '';
+    renderLeaderboard();
 
     document.getElementById('game-over').classList.remove('hidden');
     document.getElementById('start-btn').disabled = false;
@@ -2473,6 +2668,8 @@ function endGame() {
 document.getElementById('start-btn').addEventListener('click', startGame);
 document.getElementById('pause-btn').addEventListener('click', togglePause);
 document.getElementById('restart-btn').addEventListener('click', startGame);
+const submitScoreBtn = document.getElementById('submit-score-btn');
+if (submitScoreBtn) submitScoreBtn.addEventListener('click', submitVerifiedScore);
 
 const shareBtn = document.getElementById('share-btn');
 if (shareBtn) {
@@ -2666,7 +2863,7 @@ window.KitchenAPI = {
     getRecipes: () =>
         Object.entries(RECIPES).map(([name, recipe]) => ({
             name,
-            emoji: recipe.emoji,
+            icon: recipe.icon || RECIPE_ICON_BY_NAME[name] || 'ORD',
             difficulty: recipe.difficulty,
             components: recipe.components.map(c => ({ ingredient: c.ingredient, state: c.state }))
         })),
@@ -2690,8 +2887,10 @@ window.KitchenAPI = {
 };
 
 // Initial render
+SkinStore.init();
 initChefs();
 render();
+renderLeaderboard();
 
 console.log(`
 Chef Overflow v2.0

@@ -867,7 +867,12 @@ body.game-running #start-btn {
 }
 
 .order-emoji {
-    font-size: 18px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .vip-star {
@@ -1342,6 +1347,35 @@ body.game-running #start-btn {
     border: 1px solid var(--border-subtle);
     cursor: pointer;
     font-size: var(--text-small);
+}
+
+.leaderboard-receipt {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+}
+
+.leaderboard-status {
+    font-size: 12px;
+    color: var(--ht6-teal-light);
+}
+
+.leaderboard-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.lb-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-primary);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: rgba(0, 0, 0, 0.2);
 }
 
 @media (max-width: 1100px) {

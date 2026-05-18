@@ -97,7 +97,7 @@
             <div class="recipe-row recipe-row--4">
             <div class="recipe-card" data-difficulty="1">
                 <div class="recipe-card-head">
-                    <span class="recipe-title">🥗 Salad</span>
+                    <span class="recipe-title">SAL Salad</span>
                     <span class="recipe-difficulty" title="Easy">Easy</span>
                 </div>
                 <div class="recipe-steps">
@@ -108,7 +108,7 @@
             </div>
             <div class="recipe-card" data-difficulty="1">
                 <div class="recipe-card-head">
-                    <span class="recipe-title">🥩 Steak</span>
+                    <span class="recipe-title">STK Steak</span>
                     <span class="recipe-difficulty" title="Easy">Easy</span>
                 </div>
                 <div class="recipe-steps">
@@ -119,7 +119,7 @@
             </div>
             <div class="recipe-card" data-difficulty="2">
                 <div class="recipe-card-head">
-                    <span class="recipe-title">🍔 Burger</span>
+                    <span class="recipe-title">BRG Burger</span>
                     <span class="recipe-difficulty" title="Medium">Medium</span>
                 </div>
                 <div class="recipe-steps">
@@ -131,7 +131,7 @@
             </div>
             <div class="recipe-card" data-difficulty="3">
                 <div class="recipe-card-head">
-                    <span class="recipe-title">🍕 Pizza</span>
+                    <span class="recipe-title">PZZ Pizza</span>
                     <span class="recipe-difficulty" title="Hard">Hard</span>
                 </div>
                 <div class="recipe-steps">
@@ -146,7 +146,7 @@
             <div class="recipe-row recipe-row--3">
             <div class="recipe-card" data-difficulty="3">
                 <div class="recipe-card-head">
-                    <span class="recipe-title">🍔✨ Deluxe Burger</span>
+                    <span class="recipe-title">DBR Deluxe Burger</span>
                     <span class="recipe-difficulty" title="Hard">Hard</span>
                 </div>
                 <div class="recipe-steps">
@@ -159,7 +159,7 @@
             </div>
             <div class="recipe-card" data-difficulty="4">
                 <div class="recipe-card-head">
-                    <span class="recipe-title">🍱 Feast Platter</span>
+                    <span class="recipe-title">FST Feast Platter</span>
                     <span class="recipe-difficulty" title="Expert">Expert</span>
                 </div>
                 <div class="recipe-steps">
@@ -172,7 +172,7 @@
             </div>
             <div class="recipe-card" data-difficulty="4">
                 <div class="recipe-card-head">
-                    <span class="recipe-title">🍕✨ Supreme Pizza</span>
+                    <span class="recipe-title">SPZ Supreme Pizza</span>
                     <span class="recipe-difficulty" title="Expert">Expert</span>
                 </div>
                 <div class="recipe-steps">
@@ -187,7 +187,7 @@
             </div>
         </div>
         <div class="tips">
-            <b>💡 Tips:</b> Stove progress bar turns <span class="tip-ok">green</span> when ready.
+            <b>Tips:</b> Stove progress bar turns <span class="tip-ok">green</span> when ready.
             Pick up before it turns <span class="tip-bad">red</span> (burnt)!
             Items on plating area combine into a dish.
         </div>
@@ -195,7 +195,7 @@
 
     <div id="game-over" class="hidden">
         <div class="game-over-modal">
-            <h1>🎮 Game Over</h1>
+            <h1>Game Over</h1>
             <div class="game-over-grade-row">
                 <span id="final-grade" class="grade-letter grade-c">—</span>
                 <span class="grade-caption">Grade</span>
@@ -211,8 +211,11 @@
             <hr class="game-over-hr">
             <div class="game-over-submit-placeholder">
                 <label class="sr-only" for="leaderboard-handle">Handle (optional)</label>
-                <input type="text" id="leaderboard-handle" class="leaderboard-handle-input" placeholder="Handle (leaderboard — coming soon)" disabled>
-                <button type="button" class="small-btn" disabled>Submit score</button>
+                <input type="text" id="leaderboard-handle" class="leaderboard-handle-input" placeholder="Handle (max 16 chars)">
+                <button type="button" id="submit-score-btn" class="small-btn">Submit verified score</button>
+                <div id="run-receipt" class="leaderboard-receipt"></div>
+                <div id="leaderboard-status" class="leaderboard-status"></div>
+                <div id="leaderboard-list" class="leaderboard-list"></div>
             </div>
             <div class="game-over-actions">
                 <button type="button" id="share-btn" class="btn-share">Share</button>
