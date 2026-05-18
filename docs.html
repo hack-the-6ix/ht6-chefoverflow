@@ -237,7 +237,7 @@
     <div class="panel">
         <p>Five chefs move on a grid kitchen. You send them to stations with <code>KitchenAPI.command(chefId, stationId)</code>. Orders appear at reception stands; each order lists the exact ingredients and preparation state required (raw, chopped, or cooked).</p>
         <p>Chefs take ingredients from bins → chop at cutting boards → cook on stoves → combine items on plating areas with a <strong>clean plate</strong> from the dish rack → deliver the finished plate to the reception stand that holds that order.</p>
-        <p>After a correct delivery, the customer leaves a <strong>dirty dish</strong> on the stand. You must pick it up with empty hands, wash at the sink, and return clean plates to the dish rack. <strong>Plates are a finite shared resource</strong>, running out stalls the kitchen.</p>
+        <p>After a correct delivery, the customer leaves a <strong>dirty dish</strong> on the stand. You must pick it up with empty hands, wash at the sink, and return clean plates to the dish rack. <strong>Plates are a finite shared resource</strong> — running out stalls the kitchen.</p>
         <p>The game ends after <strong>three expired orders</strong>. Score = delivery points + endurance-time bonus after 10 minutes. <strong>Difficulty ramps aggressively</strong>: the first minute is approachable manually; after that, automation is essentially required.</p>
     </div>
 
@@ -260,8 +260,8 @@
         <li>Click <strong>Start Game</strong> or call <code>KitchenAPI.start()</code>.</li>
         <li>Iterate: add chefs, more recipes, bussing logic, and rush handling.</li>
     </ol>
-    <div class="tip tip-info">Always register your agent with <code>KitchenAPI.run(fn)</code>. It survives <code>start()</code> and restarts, and re-pasting your script just replaces the old agent. Raw <code>KitchenAPI.onTick(fn)</code> listeners are <strong>cleared on every <code>start()</code></strong>, so the order you paste vs. start matters for them, <code>run()</code> avoids that pitfall entirely.</div>
-    <div class="tip tip-info">You can also save agent code in a <code>.js</code> file and inject it via a bookmarklet or a local <code>&lt;script&gt;</code> tag, any method that runs in the page context where <code>window.KitchenAPI</code> is available.</div>
+    <div class="tip tip-info">Register your agent with <code>KitchenAPI.run(fn)</code> — it survives <code>start()</code> and restarts, and re-pasting replaces the old agent. Raw <code>onTick</code> listeners are cleared on every <code>start()</code>; <code>run()</code> avoids that.</div>
+    <div class="tip tip-info">To load an agent from a file instead of the console, inject it via a bookmarklet or a local <code>&lt;script&gt;</code> tag — anything that runs where <code>window.KitchenAPI</code> exists.</div>
 
     <h2>3. API Reference</h2>
 
@@ -270,7 +270,7 @@
 
     <h3>KitchenAPI.run(fn)</h3>
     <p><strong>Recommended entry point.</strong> Registers <code>fn</code> as your agent. It runs once per game frame and <strong>survives <code>start()</code> and restarts</strong>. Calling <code>run()</code> again replaces the previous agent, so re-pasting your script is always safe (no double-registration).</p>
-    <p><strong>Signature:</strong> <code>fn(state, api, tick)</code>, where <code>state</code> is a fresh <code>getState()</code> snapshot, <code>api</code> is <code>KitchenAPI</code>, and <code>tick</code> is <code>{ dt, time }</code>. Exceptions thrown inside <code>fn</code> are caught and logged as <code>"Agent error:"</code>, the run continues.</p>
+    <p><strong>Signature:</strong> <code>fn(state, api, tick)</code>, where <code>state</code> is a fresh <code>getState()</code> snapshot, <code>api</code> is <code>KitchenAPI</code>, and <code>tick</code> is <code>{ dt, time }</code>. Exceptions thrown inside <code>fn</code> are caught and logged as <code>"Agent error:"</code> — the run continues.</p>
     <p><strong>Returns:</strong> <code>undefined</code>.</p>
     <pre><code>KitchenAPI.run((s, api) => {
   if (!s.running || s.paused) return;
@@ -405,29 +405,28 @@ if (!r.success) console.error(r.error);</code></pre>
 
     <h2>6. Game Mechanics for Agents</h2>
     <ul>
-        <li><strong>Chefs block each other</strong>, no two chefs on the same tile; pathfinding may fail if every adjacent tile is occupied.</li>
-        <li><strong>One hold slot</strong>, a chef holds either one ingredient (with state) or one plate (bag of ingredients). No stacking.</li>
-        <li><strong>command() is asynchronous</strong>, it sets <code>path</code> and <code>targetStation</code>. Wait until <code>!chef.busy && !chef.hasPath</code> before issuing a new command for that chef.</li>
-        <li><strong>Busy during processing</strong>, chopping, stove wait, and sink wash all set <code>busy = true</code>. Don't stack commands on a busy chef.</li>
-        <li><strong>Stoves keep cooking unattended</strong>, food placed on a stove stays and can burn; always send someone back to pick it up in time.</li>
-        <li><strong>Plates are a resource</strong>, monitor <code>stations.dishRacks[0].cleanPlates</code>; build a bus loop (dirty stand → sink → rack) or the kitchen stalls.</li>
-        <li><strong>Delivery matching is exact</strong>, component count and every <code>(ingredient, state)</code> pair must match the order; extras cause a failed delivery.</li>
-        <li><strong>Wrong delivery</strong>, plate is discarded, streak resets to 0.</li>
-        <li><strong>VIP orders</strong>, shorter timer, 1.5× score multiplier (marked with ★ in the UI).</li>
-        <li><strong>Streak multiplier</strong>, +5% per consecutive correct delivery, capped at +100% (2×) at streak 20; any wrong delivery or expiry resets to 0.</li>
-        <li><strong>Rush mode</strong>, periodic burst where spawn rate spikes; check <code>state.rush.active</code> to react.</li>
+        <li><strong>Chefs block each other</strong> — no two chefs on the same tile; pathfinding may fail if every adjacent tile is occupied.</li>
+        <li><strong>One hold slot</strong> — a chef holds either one ingredient (with state) or one plate (bag of ingredients). No stacking.</li>
+        <li><strong>command() is asynchronous</strong> — it sets the chef's path. Wait until <code>!chef.busy && !chef.hasPath</code> before issuing the next command for that chef.</li>
+        <li><strong>Busy during processing</strong> — chopping, cooking, and washing all set <code>busy = true</code>. Don't stack commands on a busy chef.</li>
+        <li><strong>Stoves cook unattended</strong> — food left on a stove keeps cooking and can burn; send someone back to collect it in time.</li>
+        <li><strong>Plates are a resource</strong> — monitor <code>stations.dishRacks[0].cleanPlates</code> and run a bus loop (dirty stand → sink → rack), or the kitchen stalls.</li>
+        <li><strong>Delivery matching is exact</strong> — component count and every <code>(ingredient, state)</code> pair must match; extras cause a failed delivery.</li>
+        <li><strong>Wrong delivery</strong> — the plate is discarded and the streak resets to 0.</li>
+        <li><strong>VIP orders</strong> — shorter timer, 1.5× score (marked ★ in the UI).</li>
+        <li><strong>Streak multiplier</strong> — +5% per consecutive correct delivery, capped at 2× by streak 20; any wrong delivery or expiry resets it.</li>
+        <li><strong>Rush mode</strong> — periodic spawn-rate spike; check <code>state.rush.active</code> to react.</li>
     </ul>
 
     <h2>7. Agent Architecture Tips</h2>
     <div class="tip tip-info">Prove one recipe end-to-end with one chef before adding more chefs or recipes.</div>
     <ul>
-        <li><strong>Role split</strong>: assign chefs to dedicated roles (cook, chopper, plater/deliverer, busser). One chef per role keeps logic simple.</li>
-        <li>Sort work by <code>order.timeLeft</code>, always serve the most urgent order first.</li>
-        <li><strong>Automate the plate lifecycle early</strong>, most naive agents fail when the dish rack empties.</li>
-        <li>Register your agent with <code>run()</code> (or <code>onTick</code>) rather than <code>setInterval</code> so logic stays aligned with the simulation step (<code>dt</code> aware).</li>
-        <li>Guard every <code>command()</code> with <code>running &amp;&amp; !paused &amp;&amp; !chef.busy &amp;&amp; !chef.hasPath</code> to avoid error spam.</li>
-        <li>Use <code>onOrderSpawned</code> to pre-route chefs rather than polling each tick, reduces latency.</li>
-        <li>Watch for burnt stoves: check <code>stove.burnt</code> and trash burnt items promptly.</li>
+        <li><strong>Role split</strong> — assign each chef a dedicated role (cook, chopper, plater/deliverer, busser). One role per chef keeps logic simple.</li>
+        <li><strong>Serve the most urgent order first</strong> — sort by <code>order.timeLeft</code>.</li>
+        <li><strong>Automate the plate lifecycle early</strong> — most naive agents fail when the dish rack empties.</li>
+        <li><strong>Guard every <code>command()</code></strong> with <code>running &amp;&amp; !paused &amp;&amp; !chef.busy &amp;&amp; !chef.hasPath</code> to avoid error spam.</li>
+        <li><strong>Pre-route on <code>onOrderSpawned</code></strong> rather than polling each tick to cut latency.</li>
+        <li><strong>Trash burnt items</strong> — check <code>stove.burnt</code> and clear it promptly.</li>
     </ul>
 
     <h2>8. Example Agents</h2>
