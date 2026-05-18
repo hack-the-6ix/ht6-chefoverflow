@@ -263,8 +263,6 @@ const SKIN_SOURCES = {
         stove: 'assets/skins/stations/stove.png',
         cuttingBoard: 'assets/skins/stations/cutting-board.png',
         platingArea: 'assets/skins/stations/plating-area.png',
-        dishRack: 'assets/skins/stations/dish-rack.png',
-        sink: 'assets/skins/stations/sink.png',
         trash: 'assets/skins/stations/trash.png',
         receptionStand: 'assets/skins/stations/reception-stand.png',
         counter: 'assets/skins/stations/counter.png',
@@ -506,9 +504,7 @@ function pathPreviewTintForStation(info) {
         stove: COLORS.stove,
         cuttingBoard: COLORS.cuttingBoard,
         platingArea: COLORS.platingArea,
-        dishRack: '#8d6e63',
         trash: '#37474f',
-        sink: '#78909c',
         receptionStand: COLORS.receptionStand,
         counter: COLORS.counter
     };
@@ -624,6 +620,48 @@ const RECIPE_NAMES_BY_PHASE = {
     ramp: ['Salad', 'Steak', 'Burger']
 };
 
+function matchPlateToDish(items) {
+    if (!items || items.length === 0) return null;
+    const sortedItems = items.slice().sort((a, b) =>
+        (a.ingredient || '').localeCompare(b.ingredient || '')
+    );
+    for (const [name, recipe] of Object.entries(RECIPES)) {
+        const comps = recipe.components;
+        if (comps.length !== sortedItems.length) continue;
+        const sortedComps = comps.slice().sort((a, b) =>
+            a.ingredient.localeCompare(b.ingredient)
+        );
+        let ok = true;
+        for (let i = 0; i < sortedComps.length; i++) {
+            if (sortedComps[i].ingredient !== sortedItems[i].ingredient ||
+                sortedComps[i].state !== sortedItems[i].state) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) return name;
+    }
+    return null;
+}
+
+function drawDishIcon(dishName, x, y, w, h) {
+    const path = SKIN_SOURCES.order[dishName];
+    return !!(path && SkinStore.draw(path, x, y, w, h, 'contain'));
+}
+
+function drawIngredientIconCircle(ingredient, cx, cy, radius) {
+    const path = SKIN_SOURCES.ingredient[ingredient];
+    const size = radius * 2.2;
+    if (path && SkinStore.draw(path, cx - size / 2, cy - size / 2, size, size)) return;
+    ctx.fillStyle = COLORS[ingredient] || '#888';
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+}
+
 // =============================================
 // MAP LAYOUT - Restaurant Style
 // =============================================
@@ -635,9 +673,7 @@ const TILE_TYPES = {
     STOVE: 4,
     CUTTING_BOARD: 5,
     PLATING_AREA: 6,
-    DISH_RACK: 8,
     TRASH: 9,
-    SINK: 10,
     RECEPTION_STAND: 7
 };
 
@@ -648,9 +684,7 @@ const stations = {
     cuttingBoards: [],
     platingAreas: [],
     counters: [],
-    dishRacks: [],
     trashCans: [],
-    sinks: [],
     receptionStands: []
 };
 
@@ -743,9 +777,9 @@ cuttingPositions.forEach((pos, i) => {
     });
 });
 
-// Place plating areas (2) - near pass-through
+// Place plating areas (4) - near pass-through and where the old dish rack / sink sat
 const platingPositions = [
-    { x: 10, y: 5 }, { x: 10, y: 8 }
+    { x: 10, y: 5 }, { x: 10, y: 8 }, { x: 11, y: 5 }, { x: 3, y: 5 }
 ];
 platingPositions.forEach((pos, i) => {
     map[pos.y][pos.x] = TILE_TYPES.PLATING_AREA;
@@ -758,16 +792,6 @@ platingPositions.forEach((pos, i) => {
         busy: false
     });
 });
-
-// Place a dishes rack (limited plates)
-const dishRackPos = { x: 11, y: 5 };
-map[dishRackPos.y][dishRackPos.x] = TILE_TYPES.DISH_RACK;
-stations.dishRacks.push({ id: 'dishrack_0', x: dishRackPos.x, y: dishRackPos.y, count: 5, maxCount: 8, dirty: 0 });
-
-// Place a sink
-const sinkPos = { x: 3, y: 5 };
-map[sinkPos.y][sinkPos.x] = TILE_TYPES.SINK;
-stations.sinks.push({ id: 'sink_0', x: sinkPos.x, y: sinkPos.y });
 
 // Place a trash can
 const trashPos = { x: 3, y: 9 };
@@ -786,8 +810,7 @@ receptionPositions.forEach((pos, i) => {
         x: pos.x,
         y: pos.y,
         order: null,
-        customer: null, // { timeLeft }
-        hasDirtyDish: false
+        customer: null // { timeLeft }
     });
 });
 
@@ -831,7 +854,6 @@ function initChefs() {
             moveTimer: 0,
             waitingAt: null,
             waitingAtStove: null,
-            waitingAtSink: null,
             boostActive: false,
             boostTime: 0,
             boostCooldown: 0
@@ -846,7 +868,7 @@ const orders = [];
 let orderIdCounter = 0;
 
 function standFreeForOrder(s) {
-    return !s.order && !s.customer && !s.hasDirtyDish;
+    return !s.order && !s.customer;
 }
 
 function failOrderNoStandSlot() {
@@ -1034,14 +1056,8 @@ function getStationAt(x, y) {
     for (const counter of stations.counters) {
         if (counter.x === x && counter.y === y) return { type: 'counter', station: counter };
     }
-    for (const rack of stations.dishRacks) {
-        if (rack.x === x && rack.y === y) return { type: 'dishRack', station: rack };
-    }
     for (const trash of stations.trashCans) {
         if (trash.x === x && trash.y === y) return { type: 'trash', station: trash };
-    }
-    for (const sink of stations.sinks) {
-        if (sink.x === x && sink.y === y) return { type: 'sink', station: sink };
     }
     for (const plate of stations.platingAreas) {
         if (plate.x === x && plate.y === y) return { type: 'platingArea', station: plate };
@@ -1115,46 +1131,6 @@ function interactWithStation(chef, stationInfo) {
             }
             break;
 
-        case 'dishRack':
-            // Take an empty plate or return an empty plate
-            if (!chef.holding) {
-                if (station.count > 0) {
-                    chef.holding = { type: 'plate', items: [], dirty: false };
-                    station.count -= 1;
-                    showFloatingText(chef.x, chef.y, 'Picked up clean plate', '#fff');
-                } else if (station.dirty && station.dirty > 0) {
-                    // Pick up a dirty plate from the rack to bring to sink
-                    chef.holding = { type: 'plate', items: [], dirty: true };
-                    station.dirty -= 1;
-                    showFloatingText(chef.x, chef.y, 'Picked up dirty plate 🟤', '#ffcc80');
-                } else {
-                    if (countCleanPlatesInWorld() === 0) {
-                        showFloatingText(station.x, station.y, 'No clean plates!', '#ffb74d');
-                    } else {
-                        showFloatingText(station.x, station.y, 'No clean plates here, check the line', '#ffb74d');
-                    }
-                }
-            } else if (chef.holding && chef.holding.type === 'plate') {
-                // Returning plates: if empty -> add to clean count (respect max), if dirty -> add to dirty pile
-                if (!chef.holding.items || chef.holding.items.length === 0) {
-                    if (chef.holding.dirty) {
-                        station.dirty = station.dirty || 0;
-                        station.dirty += 1;
-                        chef.holding = null;
-                        showFloatingText(station.x, station.y, 'Returned dirty plate, it will be washed', '#ff7043');
-                    } else if (station.count < (station.maxCount || 8)) {
-                        station.count += 1;
-                        chef.holding = null;
-                        showFloatingText(station.x, station.y, 'Returned plate to rack', '#ffd54f');
-                    } else {
-                        showFloatingText(station.x, station.y, 'Dish rack full, cannot return plate', '#ffb74d');
-                    }
-                } else {
-                    showFloatingText(station.x, station.y, 'Clear the plate before returning it', '#ffb74d');
-                }
-            }
-            break;
-            
         case 'cuttingBoard':
             // Chop held ingredient or pick up chopped
             if (station.processing && station.processTime >= station.maxProcessTime) {
@@ -1217,76 +1193,25 @@ function interactWithStation(chef, stationInfo) {
             }
             break;
 
-        case 'sink':
-            // Wash a dirty plate while holding it
-            if (chef.holding && chef.holding.type === 'plate') {
-                if ((chef.holding.items && chef.holding.items.length > 0) || chef.holding.dirty) {
-                    // Start washing: short delay, then clear items
-                    chef.busy = true;
-                    chef.actionTimer = 2.0; // 2 seconds to wash
-                    chef.waitingAtSink = station;
-                    showFloatingText(station.x, station.y, '🧼 Washing plate...', '#4fc3f7');
-                } else {
-                    showFloatingText(station.x, station.y, 'Plate is already clean', '#9e9e9e');
-                }
-            } else {
-                showFloatingText(station.x, station.y, 'Hold a dirty plate to wash it', '#9e9e9e');
-            }
-            break;
-            
         case 'platingArea':
-            // Add item to plate or pick up plate. Allow combining into a held plate.
+            // Plates are infinite. Ingredients accumulate on the area; picking up wraps them in a plate.
             if (chef.holding && chef.holding.type !== 'plate') {
-                // Restriction: no serving raw meat directly to plating
                 if (chef.holding.ingredient === 'meat' && chef.holding.state === INGREDIENT_STATES.RAW) {
                     showFloatingText(station.x, station.y, 'No serving raw meat! Cook it first.', '#ffb74d');
                     return;
                 }
-                // If plating area already has a plate, add ingredient to that plate
-                if (station.items.length === 1 && station.items[0].type === 'plate') {
-                    station.items[0].items.push(chef.holding);
-                    showFloatingText(station.x, station.y, `Added ${chef.holding.ingredient} to plate: ${plateSummary(station.items[0])}`, '#4caf50');
-                    chef.holding = null;
-                } else {
-                    station.items.push(chef.holding);
-                    showFloatingText(station.x, station.y, `+1 (${station.items.length} items)`, '#2196f3');
-                    chef.holding = null;
-                }
-
+                station.items.push(chef.holding);
+                showFloatingText(station.x, station.y, `+1 (${station.items.length} items)`, '#2196f3');
+                chef.holding = null;
             } else if (chef.holding && chef.holding.type === 'plate') {
-                if (chef.holding.dirty) {
-                    showFloatingText(station.x, station.y, 'Dirty plate, wash it first', '#ffb74d');
-                    return;
-                }
-                // If holding a plate and there are items on the plating area, combine them onto the plate
-                if (station.items && station.items.length > 0) {
-                    // If the plating area already has a plate, disallow stacking plates
-                    if (station.items.length === 1 && station.items[0].type === 'plate') {
-                        showFloatingText(station.x, station.y, 'Cannot stack plates here, pick up the existing plate first', '#ffb74d');
-                    } else {
-                        chef.holding.items = chef.holding.items.concat(station.items);
-                        station.items = [];
-                        showFloatingText(station.x, station.y, `PLATE Combined: ${plateSummary(chef.holding)}`, '#4caf50');
-                    }
-                } else {
-                    // Empty plating area: place plate as an item
-                    station.items.push(chef.holding);
-                    showFloatingText(station.x, station.y, `PLATE placed: ${plateSummary(chef.holding)}`, '#ffd54f');
-                    chef.holding = null;
-                }
-
+                // Merge the held plate's items into the plating area.
+                station.items = station.items.concat(chef.holding.items || []);
+                chef.holding = null;
+                showFloatingText(station.x, station.y, `Merged (${station.items.length} items)`, '#4caf50');
             } else if (!chef.holding && station.items.length > 0) {
-                // Pick up as plated dish or pick up a plate item
-                const top = station.items[station.items.length - 1];
-                if (top.type === 'plate') {
-                    chef.holding = station.items.pop();
-                    showFloatingText(chef.x, chef.y, `Picked up plate: ${plateSummary(chef.holding)}`, '#2196f3');
-                } else {
-                    // If there are raw ingredients on the plating area, picking them up yields a plate with those items
-                    chef.holding = { type: 'plate', items: [...station.items] };
-                    station.items = [];
-                    showFloatingText(chef.x, chef.y, `PLATE ready: ${plateSummary(chef.holding)}`, '#2196f3');
-                }
+                chef.holding = { type: 'plate', items: [...station.items] };
+                station.items = [];
+                showFloatingText(chef.x, chef.y, `Plate ready: ${plateSummary(chef.holding)}`, '#2196f3');
             }
             break;
         case 'receptionStand':
@@ -1313,7 +1238,6 @@ function interactWithStation(chef, stationInfo) {
                     const orderIndex = orders.indexOf(deliveredOrder);
                     if (orderIndex > -1) orders.splice(orderIndex, 1);
                     station.customer = { timeLeft: 10 }; // seconds to eat
-                    station.hasDirtyDish = false;
 
                     EventBus.emit('orderDelivered', {
                         id: deliveredOrder.id,
@@ -1327,11 +1251,6 @@ function interactWithStation(chef, stationInfo) {
                     GameState.streak = 0;
                 }
                 chef.holding = null;
-            } else if (!chef.holding && station.hasDirtyDish) {
-                // Pick up dirty dish left by customer
-                chef.holding = { type: 'plate', items: [], dirty: true };
-                station.hasDirtyDish = false;
-                showFloatingText(chef.x, chef.y, 'Picked dirty dish', '#9e9e9e');
             }
             break;
 
@@ -1366,29 +1285,6 @@ function plateSummary(plate) {
     return plate.items.map(i => i.ingredient).join(', ');
 }
 
-function countCleanPlatesInWorld() {
-    let n = 0;
-    for (const rack of stations.dishRacks) {
-        n += rack.count || 0;
-    }
-    for (const p of stations.platingAreas) {
-        if (!p.items || p.items.length !== 1) continue;
-        const top = p.items[0];
-        if (top.type === 'plate' && !top.dirty && (!top.items || top.items.length === 0)) n++;
-    }
-    for (const c of stations.counters) {
-        if (!c.items || c.items.length === 0) continue;
-        const top = c.items[c.items.length - 1];
-        if (top.type === 'plate' && !top.dirty && (!top.items || top.items.length === 0)) n++;
-    }
-    for (const ch of chefs) {
-        if (ch.holding && ch.holding.type === 'plate' && !ch.holding.dirty &&
-            (!ch.holding.items || ch.holding.items.length === 0)) {
-            n++;
-        }
-    }
-    return n;
-}
 
 // =============================================
 // FLOATING TEXT
@@ -1613,15 +1509,6 @@ function updateChef(chef, dt) {
                 }
                 chef.waitingAtStove = null;
             }
-            // Finish washing at sink
-            if (chef.waitingAtSink) {
-                if (chef.holding && chef.holding.type === 'plate') {
-                    chef.holding.items = [];
-                    chef.holding.dirty = false;
-                    showFloatingText(chef.x, chef.y, '✨ Plate cleaned!', '#4fc3f7');
-                }
-                chef.waitingAtSink = null;
-            }
         }
         return;
     }
@@ -1672,13 +1559,12 @@ function updateStations(dt) {
         }
     }
 
-    // Update reception stands (customer eating -> dirty dish)
+    // Update reception stands (customer eats, then leaves)
     for (const stand of stations.receptionStands) {
         if (stand.customer) {
             stand.customer.timeLeft -= dt;
             if (stand.customer.timeLeft <= 0) {
                 stand.customer = null;
-                stand.hasDirtyDish = true;
             }
         }
     }
@@ -1877,8 +1763,7 @@ function drawStations() {
             ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 16, 0, Math.PI * 2);
             ctx.fill();
 
-            ctx.fillStyle = COLORS[stove.cooking.ingredient] || '#fff';
-            ctx.fillRect(px + 14, py + 14, CELL_SIZE - 28, CELL_SIZE - 28);
+            drawIngredientIconCircle(stove.cooking.ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, (CELL_SIZE - 28) / 2);
 
             let barColor;
             if (progress >= 1.2) barColor = '#f44336';
@@ -1910,52 +1795,6 @@ function drawStations() {
         ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
     }
 
-    for (const rack of stations.dishRacks) {
-        const px = rack.x * CELL_SIZE;
-        const py = rack.y * CELL_SIZE;
-
-        ctx.fillStyle = '#8d6e63';
-        ctx.fillRect(px + 4, py + 4, CELL_SIZE - 8, CELL_SIZE - 8);
-        const drewRackSkin = SkinStore.draw(SKIN_SOURCES.station.dishRack, px + 4, py + 4, CELL_SIZE - 8, CELL_SIZE - 8);
-
-        if (!drewRackSkin) {
-        for (let s = 0; s < 3; s++) {
-            const oy = s * 2.5;
-            ctx.fillStyle = '#eceff1';
-            ctx.beginPath();
-            ctx.arc(px + CELL_SIZE / 2 - 4, py + CELL_SIZE / 2 - 2 - oy, 6, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#cfd8dc';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-        }
-        }
-
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 16px Inter, system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(String(rack.count), px + CELL_SIZE / 2 + 14, py + CELL_SIZE / 2 - 2);
-
-        const dirty = rack.dirty || 0;
-        if (dirty > 0) {
-            ctx.fillStyle = 'rgba(62, 39, 35, 0.95)';
-            ctx.fillRect(px + 4, py + 4, 22, 16);
-            ctx.strokeStyle = '#ffab91';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(px + 4, py + 4, 22, 16);
-            ctx.fillStyle = '#ffccbc';
-            ctx.font = 'bold 11px Inter, system-ui, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(String(dirty), px + 15, py + 12);
-        }
-
-        ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-    }
-
     for (const board of stations.cuttingBoards) {
         const px = board.x * CELL_SIZE;
         const py = board.y * CELL_SIZE;
@@ -1976,8 +1815,7 @@ function drawStations() {
         }
 
         if (board.processing) {
-            ctx.fillStyle = COLORS[board.processing.ingredient] || '#fff';
-            ctx.fillRect(px + 12, py + 12, CELL_SIZE - 24, CELL_SIZE - 24);
+            drawIngredientIconCircle(board.processing.ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, (CELL_SIZE - 24) / 2);
 
             const progress = board.processTime / board.maxProcessTime;
             const barY = py + CELL_SIZE - 12;
@@ -2019,19 +1857,21 @@ function drawStations() {
         }
 
         if (plateItems.length > 0) {
-            const angleStep = (Math.PI * 2) / plateItems.length;
-            plateItems.forEach((item, i) => {
-                const angle = i * angleStep - Math.PI / 2;
-                const ix = px + CELL_SIZE / 2 + Math.cos(angle) * 7;
-                const iy = py + CELL_SIZE / 2 + Math.sin(angle) * 7;
-                ctx.fillStyle = COLORS[item.ingredient] || '#888';
-                ctx.beginPath();
-                ctx.arc(ix, iy, 5, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-            });
+            const dishName = matchPlateToDish(plateItems);
+            const drewDish = dishName && drawDishIcon(dishName, px + 4, py + 4, CELL_SIZE - 8, CELL_SIZE - 8);
+            if (!drewDish) {
+                if (plateItems.length === 1) {
+                    drawIngredientIconCircle(plateItems[0].ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, 9);
+                } else {
+                    const angleStep = (Math.PI * 2) / plateItems.length;
+                    plateItems.forEach((item, i) => {
+                        const angle = i * angleStep - Math.PI / 2;
+                        const ix = px + CELL_SIZE / 2 + Math.cos(angle) * 8;
+                        const iy = py + CELL_SIZE / 2 + Math.sin(angle) * 8;
+                        drawIngredientIconCircle(item.ingredient, ix, iy, 7);
+                    });
+                }
+            }
 
             ctx.fillStyle = '#fff';
             ctx.font = 'bold 12px Inter, system-ui, sans-serif';
@@ -2042,29 +1882,6 @@ function drawStations() {
         ctx.strokeStyle = 'rgba(255,255,255,0.3)';
         ctx.lineWidth = 2;
         ctx.strokeRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-    }
-
-    for (const sink of stations.sinks) {
-        const px = sink.x * CELL_SIZE;
-        const py = sink.y * CELL_SIZE;
-        ctx.fillStyle = '#90a4ae';
-        ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-        const drewSinkSkin = SkinStore.draw(SKIN_SOURCES.station.sink, px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-        if (!drewSinkSkin) {
-            ctx.fillStyle = 'rgba(100, 181, 246, 0.35)';
-            ctx.beginPath();
-            ctx.roundRect(px + 8, py + 8, CELL_SIZE - 16, CELL_SIZE - 16, 8);
-            ctx.fill();
-            ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.roundRect(px + 8, py + 8, CELL_SIZE - 16, CELL_SIZE - 16, 8);
-            ctx.stroke();
-            ctx.font = '22px Inter, system-ui, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('SNK', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
-        }
     }
 
     for (const trash of stations.trashCans) {
@@ -2137,20 +1954,6 @@ function drawStations() {
             ctx.textBaseline = 'middle';
             ctx.fillStyle = '#a5d6a7';
             ctx.fillText('✓', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
-        } else if (stand.hasDirtyDish) {
-            ctx.fillStyle = '#efebe9';
-            ctx.beginPath();
-            ctx.ellipse(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 14, 10, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#5d4037';
-            ctx.beginPath();
-            ctx.ellipse(px + CELL_SIZE / 2, py + CELL_SIZE / 2 + 1, 11, 7, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#3e2723';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.ellipse(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 14, 10, 0, 0, Math.PI * 2);
-            ctx.stroke();
         } else {
             ctx.fillStyle = 'rgba(255,255,255,0.2)';
             ctx.font = '20px Inter, system-ui, sans-serif';
@@ -2177,26 +1980,36 @@ function drawCounters() {
             ctx.fillRect(px + 6, py + 6, CELL_SIZE - 12, CELL_SIZE - 12);
 
             if (top.type === 'plate') {
-                ctx.fillStyle = '#fff';
-                ctx.beginPath();
-                ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 10, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-                ctx.fillStyle = '#333';
-                ctx.font = 'bold 10px Inter, system-ui, sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(String(top.items.length), px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+                const dishName = matchPlateToDish(top.items);
+                const drewDish = dishName && drawDishIcon(dishName, px + 6, py + 6, CELL_SIZE - 12, CELL_SIZE - 12);
+                if (!drewDish) {
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath();
+                    ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 12, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    if (top.items && top.items.length === 1) {
+                        drawIngredientIconCircle(top.items[0].ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, 8);
+                    } else if (top.items && top.items.length > 1) {
+                        const angleStep = (Math.PI * 2) / top.items.length;
+                        top.items.forEach((item, i) => {
+                            const angle = i * angleStep - Math.PI / 2;
+                            const ix = px + CELL_SIZE / 2 + Math.cos(angle) * 6;
+                            const iy = py + CELL_SIZE / 2 + Math.sin(angle) * 6;
+                            drawIngredientIconCircle(item.ingredient, ix, iy, 5);
+                        });
+                    } else {
+                        ctx.fillStyle = '#333';
+                        ctx.font = 'bold 10px Inter, system-ui, sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText('0', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+                    }
+                }
             } else {
-                ctx.fillStyle = COLORS[top.ingredient] || '#ccc';
-                ctx.beginPath();
-                ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 8, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 2;
-                ctx.stroke();
+                drawIngredientIconCircle(top.ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, 9);
             }
         }
     }
@@ -2274,20 +2087,26 @@ function drawChef(chef) {
         ctx.lineWidth = 2;
         ctx.strokeStyle = '#fff';
         if (chef.holding.type === 'plate') {
-            ctx.fillStyle = '#fff';
-            ctx.beginPath();
-            ctx.arc(bx, by, r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#263238';
-            ctx.font = 'bold 10px Inter, system-ui, sans-serif';
-            ctx.fillText(String(chef.holding.items.length), bx, by);
+            const dishName = matchPlateToDish(chef.holding.items);
+            const drewDish = dishName && drawDishIcon(dishName, bx - 11, by - 11, 22, 22);
+            if (!drewDish) {
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(bx, by, r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                if (chef.holding.items && chef.holding.items.length === 1) {
+                    drawIngredientIconCircle(chef.holding.items[0].ingredient, bx, by, 5);
+                } else {
+                    ctx.fillStyle = '#263238';
+                    ctx.font = 'bold 10px Inter, system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(String(chef.holding.items.length), bx, by);
+                }
+            }
         } else {
-            ctx.fillStyle = COLORS[chef.holding.ingredient] || '#ccc';
-            ctx.beginPath();
-            ctx.arc(bx, by, r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
+            drawIngredientIconCircle(chef.holding.ingredient, bx, by, r);
             ctx.font = 'bold 8px Inter, system-ui, sans-serif';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
@@ -2839,8 +2658,7 @@ function startGame() {
     stations.stoves.forEach(s => { s.cooking = null; s.cookTime = 0; s.busy = false; });
     stations.cuttingBoards.forEach(s => { s.processing = null; s.processTime = 0; s.busy = false; });
     stations.platingAreas.forEach(s => { s.items = []; s.busy = false; });
-    stations.receptionStands.forEach(s => { s.order = null; s.customer = null; s.hasDirtyDish = false; });
-    stations.dishRacks.forEach(r => { r.count = 5; r.dirty = 0; });
+    stations.receptionStands.forEach(s => { s.order = null; s.customer = null; });
     
     orders.length = 0;
     orderIdCounter = 0;
@@ -2942,7 +2760,6 @@ function serializeAgentInventoryItem(item) {
     if (item.type === 'plate') {
         return {
             type: 'plate',
-            dirty: !!item.dirty,
             items: (item.items || []).map(i => ({ ingredient: i.ingredient, state: i.state }))
         };
     }
@@ -3017,19 +2834,7 @@ window.KitchenAPI = {
                     dish: r.order.dish,
                     timeLeft: r.order.timeLeft,
                     components: r.order.recipe.components
-                } : null,
-                hasDirtyDish: r.hasDirtyDish
-            })),
-            dishRacks: stations.dishRacks.map(r => ({
-                id: r.id,
-                pos: [r.x, r.y],
-                cleanPlates: r.count,
-                dirtyPlates: r.dirty || 0,
-                maxClean: r.maxCount || 8
-            })),
-            sinks: stations.sinks.map(s => ({
-                id: s.id,
-                pos: [s.x, s.y]
+                } : null
             })),
             trashCans: stations.trashCans.map(t => ({
                 id: t.id,
@@ -3068,9 +2873,7 @@ window.KitchenAPI = {
             cuttingBoards: 'cuttingBoard',
             platingAreas: 'platingArea',
             receptionStands: 'receptionStand',
-            sinks: 'sink',
             trashCans: 'trash',
-            dishRacks: 'dishRack',
             counters: 'counter'
         };
 
@@ -3168,9 +2971,7 @@ Station IDs:
   bin_0..5      Ingredient bins (tomato, lettuce, onion, meat, dough, cheese)
   stove_0..2    Stoves
   cutting_0..1  Cutting boards
-  plating_0..1  Plating areas
-  dishrack_0    Dish rack
-  sink_0        Sink
+  plating_0..3  Plating areas (infinite — drop ingredients, pick up plate)
   trash_0       Trash
   counter_0..N  Counter tiles
   reception_0..4 Customer stands
@@ -3183,7 +2984,7 @@ Events:
   KitchenAPI.onPhaseChanged(fn)   // tutorial / ramp / automation / endurance
   KitchenAPI.onGameOver(fn)       // Game ended
 
-Minimal steak agent (single chef, meat on plating_0, then plate, merge, deliver):
+Minimal steak agent (bin → stove → plating → reception):
   KitchenAPI.onTick(() => {
     const s = KitchenAPI.getState();
     if (!s.running || s.paused) return;
@@ -3193,16 +2994,15 @@ Minimal steak agent (single chef, meat on plating_0, then plate, merge, deliver)
     if (!steak) return;
     const h = c.holding;
     const platItems = s.stations.platingAreas[0].items || [];
-    const meatReady = platItems.some(i => i.ingredient === 'meat' && i.state === 'cooked' && i.type !== 'plate');
+    const meatReady = platItems.some(i => i.ingredient === 'meat' && i.state === 'cooked');
     if (!h) {
-      KitchenAPI.command(0, meatReady ? 'dishrack_0' : 'bin_3');
+      KitchenAPI.command(0, meatReady ? 'plating_0' : 'bin_3');
       return;
     }
     if (h.ingredient === 'meat' && h.state === 'raw') { KitchenAPI.command(0, 'stove_0'); return; }
     if (h.ingredient === 'meat' && h.state === 'cooked') { KitchenAPI.command(0, 'plating_0'); return; }
     if (h.type === 'plate') {
-      if (h.items && h.items.some(i => i.ingredient === 'meat' && i.state === 'cooked')) KitchenAPI.command(0, steak.standId);
-      else KitchenAPI.command(0, 'plating_0');
+      KitchenAPI.command(0, steak.standId);
     }
   });
 

@@ -236,8 +236,8 @@
     <h2>1. How the Game Works</h2>
     <div class="panel">
         <p>Five chefs move on a grid kitchen. You send them to stations with <code>KitchenAPI.command(chefId, stationId)</code>. Orders appear at reception stands; each order lists the exact ingredients and preparation state required (raw, chopped, or cooked).</p>
-        <p>Chefs take ingredients from bins → chop at cutting boards → cook on stoves → combine items on plating areas with a <strong>clean plate</strong> from the dish rack → deliver the finished plate to the reception stand that holds that order.</p>
-        <p>After a correct delivery, the customer leaves a <strong>dirty dish</strong> on the stand. You must pick it up with empty hands, wash at the sink, and return clean plates to the dish rack. <strong>Plates are a finite shared resource</strong> — running out stalls the kitchen.</p>
+        <p>Chefs take ingredients from bins → chop at cutting boards → cook on stoves → drop ingredients onto a plating area → pick the plate back up → deliver it to the reception stand that holds that order.</p>
+        <p><strong>Plating areas are infinite.</strong> Drop any ingredient on one and it accumulates; picking up from an area with items gives the chef a held plate containing those items. There is no plate inventory, no dish rack, and no sink — once a customer finishes eating they simply leave.</p>
         <p>The game ends after <strong>three expired orders</strong>. Score = delivery points + endurance-time bonus after 10 minutes. <strong>Difficulty ramps aggressively</strong>: the first minute is approachable manually; after that, automation is essentially required.</p>
     </div>
 
@@ -298,7 +298,7 @@ KitchenAPI.start();</code></pre>
     <p><strong>Signature:</strong> <code>(chefId: number, stationId: string) → { success: boolean, error?: string }</code></p>
     <p>Queues pathfinding to a walkable tile adjacent to the target station, then triggers the same interaction as a mouse click. Fails if: game not running or paused, invalid chef id, chef is <code>busy</code>, unknown station id, no adjacent walkable tile, or A* finds no path.</p>
     <p><strong>Chef IDs:</strong> <code>0</code>–<code>4</code>. <strong>Station IDs:</strong> strings like <code>'bin_3'</code>, <code>'stove_0'</code>, <code>'reception_2'</code>, see Section 4.</p>
-    <pre><code>const r = KitchenAPI.command(0, 'sink_0');
+    <pre><code>const r = KitchenAPI.command(0, 'plating_0');
 if (!r.success) console.error(r.error);</code></pre>
 
     <h3>KitchenAPI.boost(chefId)</h3>
@@ -309,7 +309,7 @@ if (!r.success) console.error(r.error);</code></pre>
     <p><strong>Returns:</strong> <code>undefined</code>.</p>
 
     <h3>KitchenAPI.getState()</h3>
-    <p>Returns a plain snapshot of the entire game state. Ingredient objects are <code>{ ingredient, state }</code>. Plates are <code>{ type: 'plate', dirty: boolean, items: [...] }</code>. The run ends when <code>failedOrders >= maxFailedOrders</code> (currently <strong>3</strong>).</p>
+    <p>Returns a plain snapshot of the entire game state. Ingredient objects are <code>{ ingredient, state }</code>. Plates are <code>{ type: 'plate', items: [...] }</code>. The run ends when <code>failedOrders >= maxFailedOrders</code> (currently <strong>3</strong>).</p>
     <div class="type-block">{
   time: number,              // seconds elapsed
   score: number,
@@ -327,7 +327,7 @@ if (!r.success) console.error(r.error);</code></pre>
     id: number,              // 0–4
     name: string,
     pos: [x, y],
-    holding: null | { ingredient, state } | { type: "plate", items, dirty },
+    holding: null | { ingredient, state } | { type: "plate", items },
     busy: boolean,
     hasPath: boolean,
     boostActive: boolean,
@@ -339,9 +339,7 @@ if (!r.success) console.error(r.error);</code></pre>
     stoves:           [{ id, name, pos, cooking, cookTime, maxCookTime, ready, burnt }],
     cuttingBoards:    [{ id, name, pos, busy, processing, processTime, maxProcessTime }],
     platingAreas:     [{ id, name, pos, items }],
-    receptionStands:  [{ id, name, pos, order, hasDirtyDish }],
-    dishRacks:        [{ id, pos, cleanPlates, dirtyPlates, maxClean }],
-    sinks:            [{ id, pos }],
+    receptionStands:  [{ id, name, pos, order }],
     trashCans:        [{ id, pos }],
     counters:         [{ id, pos, items }]
   },
@@ -378,12 +376,10 @@ if (!r.success) console.error(r.error);</code></pre>
             <tr><td>Ingredient bin</td><td><code>bin_0</code> … <code>bin_5</code></td><td>6</td><td><code>bin_0</code> tomato · <code>bin_1</code> lettuce · <code>bin_2</code> onion · <code>bin_3</code> meat · <code>bin_4</code> dough · <code>bin_5</code> cheese</td></tr>
             <tr><td>Stove</td><td><code>stove_0</code> … <code>stove_2</code></td><td>3</td><td>Cooks raw meat or dough; pick up at ~80% progress; burns if left too long</td></tr>
             <tr><td>Cutting board</td><td><code>cutting_0</code>, <code>cutting_1</code></td><td>2</td><td>Chops raw ingredients (not dough)</td></tr>
-            <tr><td>Plating area</td><td><code>plating_0</code>, <code>plating_1</code></td><td>2</td><td>Combine ingredients and plates; can act as temporary storage</td></tr>
-            <tr><td>Dish rack</td><td><code>dishrack_0</code></td><td>1</td><td>Take a clean plate; return a washed (clean/empty) plate</td></tr>
-            <tr><td>Sink</td><td><code>sink_0</code></td><td>1</td><td>Wash a dirty plate (must be holding a plate with <code>dirty: true</code>)</td></tr>
+            <tr><td>Plating area</td><td><code>plating_0</code> … <code>plating_3</code></td><td>4</td><td><strong>Infinite</strong>. Drop ingredients onto it; empty-handed pickup wraps them into a plate. Holding a plate + interact merges its items back onto the area.</td></tr>
             <tr><td>Trash</td><td><code>trash_0</code></td><td>1</td><td>Destroys the chef's held item permanently</td></tr>
             <tr><td>Counter</td><td><code>counter_0</code> … <code>counter_N</code></td><td>~15</td><td>Temporary storage; check <code>getState().stations.counters</code> for exact IDs</td></tr>
-            <tr><td>Reception stand</td><td><code>reception_0</code> … <code>reception_4</code></td><td>5</td><td>Deliver matching plate; pick up dirty dish with empty hands</td></tr>
+            <tr><td>Reception stand</td><td><code>reception_0</code> … <code>reception_4</code></td><td>5</td><td>Deliver matching plate. After eating, the customer leaves and the stand becomes available again.</td></tr>
         </tbody>
     </table>
 
@@ -408,9 +404,9 @@ if (!r.success) console.error(r.error);</code></pre>
         <li><strong>Chefs block each other</strong> — no two chefs on the same tile; pathfinding may fail if every adjacent tile is occupied.</li>
         <li><strong>One hold slot</strong> — a chef holds either one ingredient (with state) or one plate (bag of ingredients). No stacking.</li>
         <li><strong>command() is asynchronous</strong> — it sets the chef's path. Wait until <code>!chef.busy && !chef.hasPath</code> before issuing the next command for that chef.</li>
-        <li><strong>Busy during processing</strong> — chopping, cooking, and washing all set <code>busy = true</code>. Don't stack commands on a busy chef.</li>
+        <li><strong>Busy during processing</strong> — chopping and cooking both set <code>busy = true</code>. Don't stack commands on a busy chef.</li>
         <li><strong>Stoves cook unattended</strong> — food left on a stove keeps cooking and can burn; send someone back to collect it in time.</li>
-        <li><strong>Plates are a resource</strong> — monitor <code>stations.dishRacks[0].cleanPlates</code> and run a bus loop (dirty stand → sink → rack), or the kitchen stalls.</li>
+        <li><strong>Plating is infinite</strong> — no plate inventory to manage. A held plate exists whenever you pick up from a plating area that has items.</li>
         <li><strong>Delivery matching is exact</strong> — component count and every <code>(ingredient, state)</code> pair must match; extras cause a failed delivery.</li>
         <li><strong>Wrong delivery</strong> — the plate is discarded and the streak resets to 0.</li>
         <li><strong>VIP orders</strong> — shorter timer, 1.5× score (marked ★ in the UI).</li>
@@ -421,9 +417,9 @@ if (!r.success) console.error(r.error);</code></pre>
     <h2>7. Agent Architecture Tips</h2>
     <div class="tip tip-info">Prove one recipe end-to-end with one chef before adding more chefs or recipes.</div>
     <ul>
-        <li><strong>Role split</strong> — assign each chef a dedicated role (cook, chopper, plater/deliverer, busser). One role per chef keeps logic simple.</li>
+        <li><strong>Role split</strong> — assign each chef a dedicated role (cook, chopper, plater/deliverer). One role per chef keeps logic simple.</li>
         <li><strong>Serve the most urgent order first</strong> — sort by <code>order.timeLeft</code>.</li>
-        <li><strong>Automate the plate lifecycle early</strong> — most naive agents fail when the dish rack empties.</li>
+        <li><strong>Spread work across plating areas</strong> — <code>plating_0..3</code> are independent buffers. Use one per recipe-in-progress to avoid mixing ingredients from different orders.</li>
         <li><strong>Guard every <code>command()</code></strong> with <code>running &amp;&amp; !paused &amp;&amp; !chef.busy &amp;&amp; !chef.hasPath</code> to avoid error spam.</li>
         <li><strong>Pre-route on <code>onOrderSpawned</code></strong> rather than polling each tick to cut latency.</li>
         <li><strong>Trash burnt items</strong> — check <code>stove.burnt</code> and clear it promptly.</li>
@@ -433,7 +429,7 @@ if (!r.success) console.error(r.error);</code></pre>
     <p>These are <strong>teaching examples</strong>, not optimal solutions. They omit multi-recipe routing, full bussing, boost timing, and rush handling.</p>
 
     <h3>Example 1: Single-chef steak bot</h3>
-    <p>Uses <code>plating_0</code> as temporary storage for cooked meat, then fetches a plate and merges at the same plating area before delivering to the order's stand.</p>
+    <p>Bin → stove → plating area → reception. Plating areas are infinite, so picking up from one with cooked meat on it produces a held plate containing that meat.</p>
     <pre><code>KitchenAPI.run((s, api) => {
   if (!s.running || s.paused) return;
   const c = s.chefs[0];
@@ -443,17 +439,12 @@ if (!r.success) console.error(r.error);</code></pre>
 
   const h = c.holding;
   const platItems = s.stations.platingAreas[0].items || [];
-  const meatReady = platItems.some(
-    i => i.ingredient === 'meat' && i.state === 'cooked' && i.type !== 'plate'
-  );
+  const meatReady = platItems.some(i => i.ingredient === 'meat' && i.state === 'cooked');
 
-  if (!h) { api.command(0, meatReady ? 'dishrack_0' : 'bin_3'); return; }
+  if (!h) { api.command(0, meatReady ? 'plating_0' : 'bin_3'); return; }
   if (h.ingredient === 'meat' && h.state === 'raw')    { api.command(0, 'stove_0');   return; }
   if (h.ingredient === 'meat' && h.state === 'cooked') { api.command(0, 'plating_0'); return; }
-  if (h.type === 'plate') {
-    const done = h.items && h.items.some(i => i.ingredient === 'meat' && i.state === 'cooked');
-    api.command(0, done ? steak.standId : 'plating_0');
-  }
+  if (h.type === 'plate') { api.command(0, steak.standId); }
 });</code></pre>
 
     <h3>Example 2: Simple multi-chef coordinator</h3>
@@ -483,15 +474,14 @@ if (!r.success) console.error(r.error);</code></pre>
     else if (h.ingredient === 'lettuce' && h.state === 'chopped') go(1, 'plating_1');
   }
 
-  // Chef 2: grab plate → merge at plating_1 → deliver most urgent order
+  // Chef 2: pick up the prepared items from plating_1 → deliver most urgent order
   const c2 = s.chefs[2];
   if (!c2 || c2.busy || c2.hasPath) return;
   const urgent = [...s.orders].sort((a, b) => a.timeLeft - b.timeLeft)[0];
   if (!urgent) return;
   const h2 = c2.holding;
-  if (!h2)                                          { go(2, 'dishrack_0'); return; }
-  if (h2.type === 'plate' && !h2.items?.length)     { go(2, 'plating_1');  return; }
-  if (h2.type === 'plate' &&  h2.items?.length > 0) { go(2, urgent.standId); }
+  if (!h2)                                          { go(2, 'plating_1');     return; }
+  if (h2.type === 'plate' &&  h2.items?.length > 0) { go(2, urgent.standId);  return; }
 });</code></pre>
 
     <footer>
