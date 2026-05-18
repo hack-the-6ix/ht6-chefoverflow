@@ -4,207 +4,308 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chef Overflow — Agent API Reference</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg: #1a1a2e;
-            --panel: #16213e;
-            --accent: #4ecca3;
-            --text: #eee;
-            --muted: #9aaeb0;
-            --code-bg: #0f0f1a;
-            --border: rgba(255,255,255,0.08);
+            --bg:       #0D0820;
+            --navy:     #130A38;
+            --midnight: #1E1058;
+            --indigo:   #2C1C7A;
+            --purple:   #3D2A90;
+            --violet:   #6040B8;
+            --teal:     #44D9B8;
+            --teal-lt:  #7BE8D0;
+            --gold:     #E8B84B;
+            --amber:    #D4944C;
+            --lamp:     #E87820;
+            --text:     #EAE4F8;
+            --muted:    #9888C0;
+            --dim:      #5A4880;
+            --code-bg:  #0A0620;
+            --border:   rgba(255, 255, 255, 0.07);
+            --glass:    rgba(30, 16, 88, 0.82);
         }
-        * { box-sizing: border-box; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, var(--bg) 0%, #16213e 100%);
+            font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif;
+            background: linear-gradient(165deg, var(--bg) 0%, var(--navy) 38%, var(--midnight) 100%);
             color: var(--text);
-            line-height: 1.55;
-            max-width: 900px;
+            line-height: 1.6;
+            min-height: 100vh;
+            padding: 32px 20px 64px;
+        }
+        .wrap {
+            max-width: 920px;
             margin: 0 auto;
-            padding: 24px 20px 48px;
         }
-        a { color: #7fdbca; }
+        a { color: var(--teal-lt); text-decoration: none; }
         a:hover { text-decoration: underline; }
+
+        /* ── Header ── */
         header {
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 20px;
-            margin-bottom: 28px;
+            text-align: center;
+            margin-bottom: 40px;
         }
-        h1 {
-            font-size: 1.65rem;
-            color: var(--accent);
-            margin: 0 0 8px;
-            font-weight: 600;
+        .ht6-logo {
+            height: 140px;
+            width: auto;
+            display: block;
+            margin: 0 auto 8px;
+            filter: drop-shadow(0 0 12px rgba(232, 120, 32, 0.4))
+                    drop-shadow(0 4px 16px rgba(0, 0, 0, 0.5));
         }
-        .subtitle { color: var(--muted); font-size: 0.95rem; margin-bottom: 12px; }
-        .header-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-        .docs-brand {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 6px;
+        header h1 {
+            font-size: clamp(1.5rem, 4vw, 2rem);
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            background: linear-gradient(180deg, #fff8f0 0%, var(--gold) 55%, var(--amber) 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 0 18px rgba(232, 184, 75, 0.5));
+            margin-bottom: 8px;
+        }
+        .subtitle {
+            color: var(--muted);
+            font-size: 0.95rem;
             margin-bottom: 16px;
         }
-        .docs-brand .ht6-logo {
-            height: 168px;
-            width: auto;
-            max-width: 100%;
-            display: block;
-            object-fit: contain;
-            filter: drop-shadow(0 0 12px rgba(78, 204, 163, 0.4))
-                drop-shadow(0 4px 16px rgba(0, 0, 0, 0.35));
-        }
-        .docs-brand h1 {
-            margin: 0;
-            line-height: 1.25;
-            text-shadow: 0 0 18px rgba(78, 204, 163, 0.45);
+        .header-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
         }
         .badge {
             display: inline-block;
-            background: rgba(78, 204, 163, 0.15);
-            color: var(--accent);
-            padding: 4px 10px;
-            border-radius: 6px;
+            background: rgba(96, 64, 184, 0.25);
+            border: 1px solid rgba(96, 64, 184, 0.4);
+            color: var(--teal-lt);
+            padding: 4px 12px;
+            border-radius: 20px;
             font-size: 0.8rem;
-            font-family: ui-monospace, monospace;
+            font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
         }
+        .back-link {
+            background: rgba(68, 217, 184, 0.1);
+            border: 1px solid rgba(68, 217, 184, 0.2);
+            color: var(--teal-lt);
+            padding: 4px 14px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        .back-link:hover { background: rgba(68, 217, 184, 0.18); text-decoration: none; }
+
+        /* ── Sections ── */
         h2 {
-            font-size: 1.2rem;
-            color: var(--accent);
-            margin: 32px 0 14px;
-            padding-top: 8px;
+            font-size: 1.15rem;
+            font-weight: 800;
+            color: var(--gold);
+            margin: 40px 0 14px;
+            padding-top: 20px;
             border-top: 1px solid var(--border);
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
         }
         h2:first-of-type { border-top: none; padding-top: 0; }
-        h3 { font-size: 1rem; color: #c8e6c9; margin: 20px 0 8px; }
-        p, li { margin: 0 0 10px; }
-        ul { padding-left: 1.25rem; }
+        h3 {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: var(--teal-lt);
+            margin: 24px 0 8px;
+            font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+        }
+        p, li { margin-bottom: 10px; font-size: 0.93rem; }
+        ul, ol { padding-left: 1.4rem; }
+
+        /* ── Cards / panels ── */
+        .panel {
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px 24px;
+            margin: 16px 0;
+            backdrop-filter: blur(10px);
+        }
+
+        /* ── Tables ── */
         table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 0.9rem;
-            margin: 12px 0;
+            font-size: 0.87rem;
+            margin: 14px 0;
+            border-radius: 10px;
+            overflow: hidden;
         }
         th, td {
             border: 1px solid var(--border);
-            padding: 10px 12px;
+            padding: 10px 14px;
             text-align: left;
             vertical-align: top;
         }
-        th { background: rgba(255,255,255,0.04); color: var(--accent); }
-        tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+        th {
+            background: rgba(61, 42, 144, 0.5);
+            color: var(--gold);
+            font-weight: 700;
+            font-size: 0.82rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+        tr:nth-child(even) td { background: rgba(255, 255, 255, 0.025); }
+        tr:hover td { background: rgba(96, 64, 184, 0.1); }
+
+        /* ── Code ── */
         pre, code {
-            font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+            font-family: ui-monospace, 'Cascadia Code', 'Fira Code', Consolas, monospace;
             font-size: 0.82rem;
         }
         pre {
             background: var(--code-bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 14px 16px;
+            border: 1px solid rgba(96, 64, 184, 0.3);
+            border-radius: 10px;
+            padding: 16px 18px;
             overflow-x: auto;
             margin: 12px 0;
-            line-height: 1.45;
+            line-height: 1.5;
         }
-        code { color: #b8d4e8; }
-        pre code { color: #c5d4e0; }
+        code { color: var(--teal-lt); }
+        pre code { color: #c8d8f0; }
+        kbd {
+            background: rgba(96, 64, 184, 0.3);
+            border: 1px solid rgba(96, 64, 184, 0.5);
+            border-radius: 5px;
+            padding: 1px 7px;
+            font-size: 0.8em;
+            color: var(--text);
+        }
+
         .type-block {
             background: var(--code-bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 14px 16px;
+            border: 1px solid rgba(96, 64, 184, 0.3);
+            border-radius: 10px;
+            padding: 16px 18px;
             margin: 12px 0;
             font-size: 0.82rem;
             white-space: pre-wrap;
-            font-family: ui-monospace, monospace;
-            color: #c5d4e0;
+            font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+            color: #c8d8f0;
+            line-height: 1.5;
         }
+
+        /* ── Tips ── */
+        .tip {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 0.88rem;
+            margin-bottom: 8px;
+        }
+        .tip-warn { background: rgba(232, 184, 75, 0.1); border-left: 3px solid var(--gold); }
+        .tip-info { background: rgba(68, 217, 184, 0.08); border-left: 3px solid var(--teal); }
+
         footer {
-            margin-top: 40px;
-            padding-top: 20px;
+            margin-top: 60px;
+            padding-top: 24px;
             border-top: 1px solid var(--border);
-            color: var(--muted);
-            font-size: 0.9rem;
+            color: var(--dim);
+            font-size: 0.88rem;
+            text-align: center;
         }
+        footer a { color: var(--muted); }
     </style>
 </head>
 <body>
+<div class="wrap">
     <header>
-        <div class="docs-brand">
-            <img src="logo.png" alt="Hack the 6ix" class="ht6-logo">
-            <h1>Chef Overflow — Agent API Reference</h1>
-        </div>
+        <img src="logo.png" alt="Hack the 6ix" class="ht6-logo">
+        <h1>Chef Overflow — Agent API Reference</h1>
         <p class="subtitle">Build an AI agent to run your kitchen. Top scores earn automatic admission to Hack the 6ix 2026.</p>
         <div class="header-row">
-            <a href="index.html">← Back to Game</a>
+            <a href="game.html" class="back-link">← Back to Game</a>
             <span class="badge">KitchenAPI v2.0.0</span>
         </div>
     </header>
 
     <h2>1. How the Game Works</h2>
-    <p>Five chefs move on a grid kitchen. You send them to stations with <code>KitchenAPI.command(chefId, stationId)</code>. Orders appear at reception stands; each order lists ingredients and the exact preparation state required (raw, chopped, or cooked).</p>
-    <p>Chefs take ingredients from bins, chop at cutting boards, cook on stoves, combine items on plating areas with a <strong>clean plate</strong> from the dish rack, then deliver the finished plate to the reception stand that holds that order.</p>
-    <p>After a correct delivery, the customer eats and leaves a <strong>dirty dish</strong> on the stand. You must bus it (empty hands), wash at the sink, and return clean plates to the dish rack. Plates are limited—running out stalls the kitchen.</p>
-    <p>The game ends after <strong>three expired orders</strong>. Your score is the sum of delivery points (plus endurance-time bonus after 10 minutes). <strong>Difficulty ramps aggressively</strong>: the first minute is approachable manually; after that, automation is essentially required.</p>
-    <p><strong>Phases (wall-clock):</strong> <em>Tutorial</em> (~0–1:00) serves Salad &amp; Steak; <em>Ramp</em> (~1:00–2:30) adds Burger. <em>Automation</em> (2:30–10:00) introduces harder recipes in stages (Pizza → Deluxe Burger → Feast → Supreme) while spawn rate and order timers tighten on smooth curves. <em>Endurance</em> (10:00+) unlocks the full recipe mix with the tightest pacing and bonus score tick.</p>
+    <div class="panel">
+        <p>Five chefs move on a grid kitchen. You send them to stations with <code>KitchenAPI.command(chefId, stationId)</code>. Orders appear at reception stands; each order lists the exact ingredients and preparation state required (raw, chopped, or cooked).</p>
+        <p>Chefs take ingredients from bins → chop at cutting boards → cook on stoves → combine items on plating areas with a <strong>clean plate</strong> from the dish rack → deliver the finished plate to the reception stand that holds that order.</p>
+        <p>After a correct delivery, the customer leaves a <strong>dirty dish</strong> on the stand. You must pick it up with empty hands, wash at the sink, and return clean plates to the dish rack. <strong>Plates are a finite shared resource</strong> — running out stalls the kitchen.</p>
+        <p>The game ends after <strong>three expired orders</strong>. Score = delivery points + endurance-time bonus after 10 minutes. <strong>Difficulty ramps aggressively</strong>: the first minute is approachable manually; after that, automation is essentially required.</p>
+    </div>
+
+    <h3 style="color:var(--gold); font-family:inherit; margin-top:8px;">Game Phases</h3>
+    <table>
+        <thead><tr><th>Phase</th><th>Approx. Time</th><th>What's new</th></tr></thead>
+        <tbody>
+            <tr><td>Tutorial</td><td>0:00 – 1:00</td><td>Salad &amp; Steak only; generous timers</td></tr>
+            <tr><td>Ramp</td><td>1:00 – 2:30</td><td>Burger unlocks; spawn rate tightens</td></tr>
+            <tr><td>Automation</td><td>2:30 – 10:00</td><td>Pizza → Deluxe Burger → Feast → Supreme Pizza in stages; timers shrink on a curve</td></tr>
+            <tr><td>Endurance</td><td>10:00+</td><td>Full recipe mix, tightest pacing, bonus score tick per second</td></tr>
+        </tbody>
+    </table>
 
     <h2>2. Quick Start</h2>
     <ol>
-        <li>Open <a href="index.html">index.html</a> in Chrome (or another modern browser).</li>
-        <li>Open DevTools (F12) → <strong>Console</strong>.</li>
-        <li>Paste the <strong>Example 1</strong> script from Section 8 below (or the minimal snippet from the console banner after loading the game).</li>
-        <li>Click <strong>Start Game</strong> or run <code>KitchenAPI.start()</code>.</li>
-        <li>Watch Chef 0 complete steak orders when tutorial-phase orders include Steak.</li>
-        <li>Iterate: add chefs, more recipes, bussing, and rush handling.</li>
+        <li>Open <a href="game.html">game.html</a> in Chrome (or another modern browser).</li>
+        <li>Open DevTools <kbd>F12</kbd> → <strong>Console</strong>.</li>
+        <li>Paste one of the example agents from Section 8 (or the minimal snippet printed in the console banner).</li>
+        <li>Click <strong>Start Game</strong> or call <code>KitchenAPI.start()</code>.</li>
+        <li>Iterate: add chefs, more recipes, bussing logic, and rush handling.</li>
     </ol>
-    <p>You can also save agent code in a <code>.js</code> file and inject it via a bookmarklet, a local script tag in a fork of <code>index.html</code>, or a browser extension—any way that runs in the game’s page context so <code>window.KitchenAPI</code> is available.</p>
+    <div class="tip tip-info">You can also save agent code in a <code>.js</code> file and inject it via a bookmarklet or a local <code>&lt;script&gt;</code> tag — any method that runs in the page context where <code>window.KitchenAPI</code> is available.</div>
 
     <h2>3. API Reference</h2>
 
     <h3>KitchenAPI.version</h3>
-    <p><strong>Type:</strong> string. Current value: <code>"2.0.0"</code>.</p>
+    <p><strong>Type:</strong> <code>string</code>. Current value: <code>"2.0.0"</code>.</p>
 
     <h3>KitchenAPI.start()</h3>
-    <p>Starts or <strong>restarts</strong> the game. Resets stations, chefs, orders, score, and <strong>clears all event listeners</strong> registered through <code>on</code> / <code>onTick</code> / etc. Re-register hooks after each start.</p>
+    <p>Starts or <strong>restarts</strong> the game. Resets stations, chefs, orders, score, and <strong>clears all registered event listeners</strong>. Re-register all hooks after each call to <code>start()</code>.</p>
     <p><strong>Returns:</strong> <code>undefined</code>.</p>
-    <pre><code>KitchenAPI.start();</code></pre>
 
     <h3>KitchenAPI.togglePause()</h3>
-    <p>Toggles pause. Updates the in-game Pause button label.</p>
+    <p>Toggles the pause state. Syncs with the in-game Pause button.</p>
     <p><strong>Returns:</strong> <code>undefined</code>.</p>
 
     <h3>KitchenAPI.command(chefId, stationId)</h3>
-    <p><strong>Signature:</strong> <code>(chefId: number, stationId: string) =&gt; { success: boolean, error?: string }</code></p>
-    <p>Queues pathfinding to a walkable tile adjacent to the target station, then runs the same interaction as a mouse click. Fails if the game is not running, is paused, the chef id is invalid, the chef is <code>busy</code>, the station id is unknown, there is no adjacent walkable tile, or A* finds no path.</p>
-    <p><strong>Chef IDs</strong> are <code>0</code>–<code>4</code>. <strong>Station IDs</strong> are strings such as <code>'bin_3'</code>, <code>'stove_0'</code>, <code>'reception_2'</code> (see Section 4).</p>
+    <p><strong>Signature:</strong> <code>(chefId: number, stationId: string) → { success: boolean, error?: string }</code></p>
+    <p>Queues pathfinding to a walkable tile adjacent to the target station, then triggers the same interaction as a mouse click. Fails if: game not running or paused, invalid chef id, chef is <code>busy</code>, unknown station id, no adjacent walkable tile, or A* finds no path.</p>
+    <p><strong>Chef IDs:</strong> <code>0</code>–<code>4</code>. <strong>Station IDs:</strong> strings like <code>'bin_3'</code>, <code>'stove_0'</code>, <code>'reception_2'</code> — see Section 4.</p>
     <pre><code>const r = KitchenAPI.command(0, 'sink_0');
 if (!r.success) console.error(r.error);</code></pre>
 
     <h3>KitchenAPI.boost(chefId)</h3>
-    <p><strong>Returns:</strong> <code>{ success: boolean, error?: string }</code>. Applies a <strong>3.5s</strong> movement speed boost with a <strong>12s</strong> cooldown. Same rules as the <kbd>B</kbd> key (but targets a chef by id).</p>
+    <p><strong>Returns:</strong> <code>{ success: boolean, error?: string }</code>. Applies a <strong>3.5 s</strong> movement speed boost with a <strong>12 s</strong> cooldown. Same as pressing <kbd>B</kbd> in-game.</p>
 
     <h3>KitchenAPI.selectChef(chefId)</h3>
-    <p>Visual selection only (highlight / UI). Does not move the chef.</p>
+    <p>Visual selection only (highlights chef in UI). Does not move the chef.</p>
     <p><strong>Returns:</strong> <code>undefined</code>.</p>
 
     <h3>KitchenAPI.getState()</h3>
-    <p>Returns a plain snapshot of the game. Ingredient objects are <code>{ ingredient, state }</code>. Plates are <code>{ type: 'plate', dirty: boolean, items: [...] }</code>. The run ends when <code>failedOrders &gt;= maxFailedOrders</code> (both are in the snapshot; <code>maxFailedOrders</code> is <strong>3</strong>).</p>
+    <p>Returns a plain snapshot of the entire game state. Ingredient objects are <code>{ ingredient, state }</code>. Plates are <code>{ type: 'plate', dirty: boolean, items: [...] }</code>. The run ends when <code>failedOrders >= maxFailedOrders</code> (currently <strong>3</strong>).</p>
     <div class="type-block">{
   time: number,              // seconds elapsed
   score: number,
-  difficulty: number,         // current multiplier (phase-based curve)
-  phase: string,              // "tutorial" | "ramp" | "automation" | "endurance" (endurance at time &gt;= 600s)
+  difficulty: number,        // current multiplier (phase-based curve)
+  phase: string,             // "tutorial" | "ramp" | "automation" | "endurance"
   streak: number,
   bestStreak: number,
   rush: { active: boolean, timeLeft: number, cooldown: number },
   failedOrders: number,
-  maxFailedOrders: number,   // game ends when failedOrders &gt;= this (currently 3)
+  maxFailedOrders: number,   // 3 — game ends when failedOrders >= this
   running: boolean,
   paused: boolean,
   gameOver: boolean,
   chefs: [{
-    id: number,               // 0–4
+    id: number,              // 0–4
     name: string,
     pos: [x, y],
     holding: null | { ingredient, state } | { type: "plate", items, dirty },
@@ -215,47 +316,39 @@ if (!r.success) console.error(r.error);</code></pre>
     boostCooldown: number
   }],
   stations: {
-    ingredientBins: [{ id, name, pos, ingredient }],
-    stoves: [{ id, name, pos, cooking, cookTime, maxCookTime, ready, burnt }],
-    cuttingBoards: [{ id, name, pos, busy, processing, processTime, maxProcessTime }],
-    platingAreas: [{ id, name, pos, items }],
-    receptionStands: [{ id, name, pos, order, hasDirtyDish }],
-    dishRacks: [{ id, pos, cleanPlates, dirtyPlates, maxClean }],
-    sinks: [{ id, pos }],
-    trashCans: [{ id, pos }],
-    counters: [{ id, pos, items }]
+    ingredientBins:   [{ id, name, pos, ingredient }],
+    stoves:           [{ id, name, pos, cooking, cookTime, maxCookTime, ready, burnt }],
+    cuttingBoards:    [{ id, name, pos, busy, processing, processTime, maxProcessTime }],
+    platingAreas:     [{ id, name, pos, items }],
+    receptionStands:  [{ id, name, pos, order, hasDirtyDish }],
+    dishRacks:        [{ id, pos, cleanPlates, dirtyPlates, maxClean }],
+    sinks:            [{ id, pos }],
+    trashCans:        [{ id, pos }],
+    counters:         [{ id, pos, items }]
   },
   orders: [{ id, dish, timeLeft, standId, components }],
-  recipes: object             // full internal RECIPES table
+  recipes: object            // full internal RECIPES table
 }</div>
     <p>Reception <code>order</code> when present: <code>{ id, dish, timeLeft, components }</code>. Stove <code>ready</code> / <code>burnt</code> mirror the UI progress thresholds.</p>
 
     <h3>KitchenAPI.getRecipes()</h3>
     <p><strong>Returns:</strong> <code>Array&lt;{ name, emoji, difficulty, components }&gt;</code> — static recipe metadata without internal step strings.</p>
 
-    <h3>Event registration</h3>
-    <p>Each method below returns an <strong>unsubscribe</strong> function: <code>const off = KitchenAPI.onTick(fn); off();</code></p>
-    <ul>
-        <li><code>KitchenAPI.on(eventName, fn)</code> — generic listener.</li>
-        <li><code>KitchenAPI.onTick(fn)</code> — alias for <code>on('tick', fn)</code>.</li>
-        <li><code>KitchenAPI.onOrderSpawned(fn)</code></li>
-        <li><code>KitchenAPI.onOrderExpired(fn)</code></li>
-        <li><code>KitchenAPI.onOrderDelivered(fn)</code></li>
-        <li><code>KitchenAPI.onOrderFailed(fn)</code></li>
-        <li><code>KitchenAPI.onGameOver(fn)</code></li>
-        <li><code>KitchenAPI.onPhaseChanged(fn)</code></li>
-    </ul>
-    <p><strong>Event names</strong> for <code>on()</code>: <code>'tick'</code>, <code>'orderSpawned'</code>, <code>'orderExpired'</code>, <code>'orderDelivered'</code>, <code>'orderFailed'</code>, <code>'gameOver'</code>, <code>'phaseChanged'</code>.</p>
-    <p><strong>Payloads:</strong></p>
-    <ul>
-        <li><code>tick</code> — <code>{ dt: number, time: number }</code></li>
-        <li><code>orderSpawned</code> — <code>{ id, dish, timeLeft, standId, components }</code></li>
-        <li><code>orderExpired</code> — <code>{ id, dish, standId }</code></li>
-        <li><code>orderDelivered</code> — <code>{ id, dish, score, streak }</code> (streak after this delivery)</li>
-        <li><code>orderFailed</code> — <code>{ dish }</code> (wrong plate at reception)</li>
-        <li><code>gameOver</code> — <code>{ score, time, bestStreak }</code></li>
-        <li><code>phaseChanged</code> — <code>{ phase }</code></li>
-    </ul>
+    <h3>Event Registration</h3>
+    <p>Each method returns an <strong>unsubscribe</strong> function: <code>const off = KitchenAPI.onTick(fn); off();</code></p>
+    <table>
+        <thead><tr><th>Method</th><th>Alias / event name</th><th>Payload</th></tr></thead>
+        <tbody>
+            <tr><td><code>KitchenAPI.on(eventName, fn)</code></td><td>generic</td><td>varies</td></tr>
+            <tr><td><code>KitchenAPI.onTick(fn)</code></td><td><code>'tick'</code></td><td><code>{ dt, time }</code></td></tr>
+            <tr><td><code>KitchenAPI.onOrderSpawned(fn)</code></td><td><code>'orderSpawned'</code></td><td><code>{ id, dish, timeLeft, standId, components }</code></td></tr>
+            <tr><td><code>KitchenAPI.onOrderExpired(fn)</code></td><td><code>'orderExpired'</code></td><td><code>{ id, dish, standId }</code></td></tr>
+            <tr><td><code>KitchenAPI.onOrderDelivered(fn)</code></td><td><code>'orderDelivered'</code></td><td><code>{ id, dish, score, streak }</code></td></tr>
+            <tr><td><code>KitchenAPI.onOrderFailed(fn)</code></td><td><code>'orderFailed'</code></td><td><code>{ dish }</code></td></tr>
+            <tr><td><code>KitchenAPI.onPhaseChanged(fn)</code></td><td><code>'phaseChanged'</code></td><td><code>{ phase }</code></td></tr>
+            <tr><td><code>KitchenAPI.onGameOver(fn)</code></td><td><code>'gameOver'</code></td><td><code>{ score, time, bestStreak }</code></td></tr>
+        </tbody>
+    </table>
 
     <h2>4. Station ID Reference</h2>
     <table>
@@ -263,63 +356,66 @@ if (!r.success) console.error(r.error);</code></pre>
             <tr><th>Station</th><th>ID pattern</th><th>Count</th><th>Notes</th></tr>
         </thead>
         <tbody>
-            <tr><td>Ingredient bin</td><td><code>bin_0</code> … <code>bin_5</code></td><td>6</td><td><code>bin_0</code> tomato, <code>bin_1</code> lettuce, <code>bin_2</code> onion, <code>bin_3</code> meat, <code>bin_4</code> dough, <code>bin_5</code> cheese</td></tr>
-            <tr><td>Stove</td><td><code>stove_0</code> … <code>stove_2</code></td><td>3</td><td>Raw meat or dough; pick up from ~80% progress; burns if ignored</td></tr>
-            <tr><td>Cutting board</td><td><code>cutting_0</code>, <code>cutting_1</code></td><td>2</td><td>Chop raw items (not dough)</td></tr>
-            <tr><td>Plating area</td><td><code>plating_0</code>, <code>plating_1</code></td><td>2</td><td>Combine ingredients and plates</td></tr>
-            <tr><td>Dish rack</td><td><code>dishrack_0</code></td><td>1</td><td>Take clean plate; return clean/dirty empty plates</td></tr>
-            <tr><td>Sink</td><td><code>sink_0</code></td><td>1</td><td>Wash dirty plate (hold plate with food scraps or dirty flag)</td></tr>
-            <tr><td>Trash</td><td><code>trash_0</code></td><td>1</td><td>Destroys held item</td></tr>
-            <tr><td>Counter</td><td><code>counter_0</code> … <code>counter_N</code></td><td>~15</td><td>One item (or plate merge rules); use <code>getState().stations.counters</code> for ids</td></tr>
-            <tr><td>Reception</td><td><code>reception_0</code> … <code>reception_4</code></td><td>5</td><td>Deliver matching plate; pick up dirty dish with empty hands</td></tr>
+            <tr><td>Ingredient bin</td><td><code>bin_0</code> … <code>bin_5</code></td><td>6</td><td><code>bin_0</code> tomato · <code>bin_1</code> lettuce · <code>bin_2</code> onion · <code>bin_3</code> meat · <code>bin_4</code> dough · <code>bin_5</code> cheese</td></tr>
+            <tr><td>Stove</td><td><code>stove_0</code> … <code>stove_2</code></td><td>3</td><td>Cooks raw meat or dough; pick up at ~80% progress; burns if left too long</td></tr>
+            <tr><td>Cutting board</td><td><code>cutting_0</code>, <code>cutting_1</code></td><td>2</td><td>Chops raw ingredients (not dough)</td></tr>
+            <tr><td>Plating area</td><td><code>plating_0</code>, <code>plating_1</code></td><td>2</td><td>Combine ingredients and plates; can act as temporary storage</td></tr>
+            <tr><td>Dish rack</td><td><code>dishrack_0</code></td><td>1</td><td>Take a clean plate; return a washed (clean/empty) plate</td></tr>
+            <tr><td>Sink</td><td><code>sink_0</code></td><td>1</td><td>Wash a dirty plate (must be holding a plate with <code>dirty: true</code>)</td></tr>
+            <tr><td>Trash</td><td><code>trash_0</code></td><td>1</td><td>Destroys the chef's held item permanently</td></tr>
+            <tr><td>Counter</td><td><code>counter_0</code> … <code>counter_N</code></td><td>~15</td><td>Temporary storage; check <code>getState().stations.counters</code> for exact IDs</td></tr>
+            <tr><td>Reception stand</td><td><code>reception_0</code> … <code>reception_4</code></td><td>5</td><td>Deliver matching plate; pick up dirty dish with empty hands</td></tr>
         </tbody>
     </table>
 
     <h2>5. Recipes</h2>
     <table>
         <thead>
-            <tr><th>Dish</th><th>Ingredients (states)</th><th>Steps summary</th></tr>
+            <tr><th>Dish</th><th>Components (ingredient · state)</th><th>Quick steps</th></tr>
         </thead>
         <tbody>
-            <tr><td>Salad</td><td>chopped lettuce, chopped tomato</td><td>Chop both, plate, deliver</td></tr>
-            <tr><td>Steak</td><td>cooked meat</td><td>Cook meat, plate, deliver</td></tr>
-            <tr><td>Burger</td><td>cooked meat, raw dough</td><td>Cook meat, bun (dough) on plate, deliver</td></tr>
-            <tr><td>Pizza</td><td>cooked dough, chopped tomato, raw cheese</td><td>Cook dough, chop tomato, cheese on plate, deliver</td></tr>
-            <tr><td>Deluxe Burger</td><td>cooked meat, raw dough, chopped onion</td><td>Cook meat, chop onion, dough on plate, deliver</td></tr>
-            <tr><td>Feast Platter</td><td>cooked meat, chopped lettuce, chopped tomato, raw cheese</td><td>Cook meat, chop veg, cheese on plate, deliver</td></tr>
-            <tr><td>Supreme Pizza</td><td>cooked dough, chopped tomato, chopped onion, raw cheese</td><td>Cook dough, chop tomato and onion, cheese on plate, deliver</td></tr>
+            <tr><td>🥗 Salad</td><td>lettuce · chopped, tomato · chopped</td><td>Chop both → plate → deliver</td></tr>
+            <tr><td>🥩 Steak</td><td>meat · cooked</td><td>Cook meat → plate → deliver</td></tr>
+            <tr><td>🍔 Burger</td><td>meat · cooked, dough · raw</td><td>Cook meat, bun (dough) on plate → deliver</td></tr>
+            <tr><td>🍕 Pizza</td><td>dough · cooked, tomato · chopped, cheese · raw</td><td>Cook dough, chop tomato, cheese on plate → deliver</td></tr>
+            <tr><td>🍔+ Deluxe Burger</td><td>meat · cooked, dough · raw, onion · chopped</td><td>Cook meat, chop onion, dough on plate → deliver</td></tr>
+            <tr><td>🍱 Feast Platter</td><td>meat · cooked, lettuce · chopped, tomato · chopped, cheese · raw</td><td>Cook meat, chop veg, cheese on plate → deliver</td></tr>
+            <tr><td>🍕+ Supreme Pizza</td><td>dough · cooked, tomato · chopped, onion · chopped, cheese · raw</td><td>Cook dough, chop tomato &amp; onion, cheese on plate → deliver</td></tr>
         </tbody>
     </table>
 
     <h2>6. Game Mechanics for Agents</h2>
     <ul>
-        <li><strong>Chefs block each other</strong> — no two chefs on one tile; pathing may fail if the only adjacent tile is occupied.</li>
-        <li><strong>One hold slot</strong> — either one ingredient (with state) or one plate (bag of ingredients).</li>
-        <li><strong>command() is asynchronous</strong> — it sets <code>path</code> and <code>targetStation</code>. Wait until <code>!chef.busy &amp;&amp; !chef.hasPath</code> before issuing a new command for that chef.</li>
-        <li><strong>Busy during processing</strong> — chopping, stove wait, and sink wash set <code>busy</code>. Do not stack commands on busy chefs.</li>
-        <li><strong>Stoves keep cooking</strong> — if the chef leaves after placing food, the item stays and can burn; send someone back to pick up.</li>
-        <li><strong>Plates are a resource</strong> — track <code>stations.dishRacks[0].cleanPlates</code>; bus dirty stands → sink → rack.</li>
-        <li><strong>Delivery matching is exact</strong> — component count and each <code>(ingredient, state)</code> must match; extras fail.</li>
-        <li><strong>Wrong delivery</strong> — plate is cleared, streak resets to 0.</li>
-        <li><strong>VIP orders</strong> — shorter timer, 1.5× score (star in UI).</li>
-        <li><strong>Streak multiplier</strong> — +5% per consecutive success, capped at +100% (2×) at streak 20+; wrong delivery or expiry resets streak.</li>
+        <li><strong>Chefs block each other</strong> — no two chefs on the same tile; pathfinding may fail if every adjacent tile is occupied.</li>
+        <li><strong>One hold slot</strong> — a chef holds either one ingredient (with state) or one plate (bag of ingredients). No stacking.</li>
+        <li><strong>command() is asynchronous</strong> — it sets <code>path</code> and <code>targetStation</code>. Wait until <code>!chef.busy && !chef.hasPath</code> before issuing a new command for that chef.</li>
+        <li><strong>Busy during processing</strong> — chopping, stove wait, and sink wash all set <code>busy = true</code>. Don't stack commands on a busy chef.</li>
+        <li><strong>Stoves keep cooking unattended</strong> — food placed on a stove stays and can burn; always send someone back to pick it up in time.</li>
+        <li><strong>Plates are a resource</strong> — monitor <code>stations.dishRacks[0].cleanPlates</code>; build a bus loop (dirty stand → sink → rack) or the kitchen stalls.</li>
+        <li><strong>Delivery matching is exact</strong> — component count and every <code>(ingredient, state)</code> pair must match the order; extras cause a failed delivery.</li>
+        <li><strong>Wrong delivery</strong> — plate is discarded, streak resets to 0.</li>
+        <li><strong>VIP orders</strong> — shorter timer, 1.5× score multiplier (marked with ★ in the UI).</li>
+        <li><strong>Streak multiplier</strong> — +5% per consecutive correct delivery, capped at +100% (2×) at streak 20; any wrong delivery or expiry resets to 0.</li>
+        <li><strong>Rush mode</strong> — periodic burst where spawn rate spikes; check <code>state.rush.active</code> to react.</li>
     </ul>
 
     <h2>7. Agent Architecture Tips</h2>
+    <div class="tip tip-info">Prove one recipe end-to-end with one chef before adding more chefs or recipes.</div>
     <ul>
-        <li>Prove one recipe with one chef before scaling.</li>
-        <li><strong>Role split</strong> (one pattern among many): cooks on stoves, choppers on boards, runner for plating, delivery, and bussing.</li>
-        <li>Sort work by <code>order.timeLeft</code> / urgency.</li>
-        <li>Automate the <strong>plate lifecycle</strong> early—most naive agents die when the rack empties.</li>
-        <li>Prefer <code>onTick</code> over raw <code>setInterval</code> so logic stays aligned with the simulation step.</li>
-        <li>Guard every command with game state checks and chef availability to avoid error spam.</li>
+        <li><strong>Role split</strong>: assign chefs to dedicated roles (cook, chopper, plater/deliverer, busser). One chef per role keeps logic simple.</li>
+        <li>Sort work by <code>order.timeLeft</code> — always serve the most urgent order first.</li>
+        <li><strong>Automate the plate lifecycle early</strong> — most naive agents fail when the dish rack empties.</li>
+        <li>Prefer <code>onTick</code> over <code>setInterval</code> so logic stays aligned with the simulation step (<code>dt</code> aware).</li>
+        <li>Guard every <code>command()</code> with <code>running &amp;&amp; !paused &amp;&amp; !chef.busy &amp;&amp; !chef.hasPath</code> to avoid error spam.</li>
+        <li>Use <code>onOrderSpawned</code> to pre-route chefs rather than polling each tick — reduces latency.</li>
+        <li>Watch for burnt stoves: check <code>stove.burnt</code> and trash burnt items promptly.</li>
     </ul>
 
     <h2>8. Example Agents</h2>
-    <p>These are <strong>teaching examples</strong>—not optimal solutions. They omit multi-recipe routing, full bussing, boost timing, and rush spikes.</p>
+    <p>These are <strong>teaching examples</strong>, not optimal solutions. They omit multi-recipe routing, full bussing, boost timing, and rush handling.</p>
 
-    <h3>Example 1: Single-chef steak bot</h3>
-    <p>Uses <code>plating_0</code> as temporary storage for cooked meat, then fetches a plate and merges at the same plating area before delivering to the stand id from the Steak order.</p>
+    <h3>Example 1 — Single-chef steak bot</h3>
+    <p>Uses <code>plating_0</code> as temporary storage for cooked meat, then fetches a plate and merges at the same plating area before delivering to the order's stand.</p>
     <pre><code>KitchenAPI.onTick(() => {
   const s = KitchenAPI.getState();
   if (!s.running || s.paused) return;
@@ -331,31 +427,20 @@ if (!r.success) console.error(r.error);</code></pre>
   const h = c.holding;
   const platItems = s.stations.platingAreas[0].items || [];
   const meatReady = platItems.some(
-    i => i.ingredient === 'meat' && i.state === 'cooked' &amp;&amp; i.type !== 'plate'
+    i => i.ingredient === 'meat' && i.state === 'cooked' && i.type !== 'plate'
   );
 
-  if (!h) {
-    KitchenAPI.command(0, meatReady ? 'dishrack_0' : 'bin_3');
-    return;
-  }
-  if (h.ingredient === 'meat' &amp;&amp; h.state === 'raw') {
-    KitchenAPI.command(0, 'stove_0');
-    return;
-  }
-  if (h.ingredient === 'meat' &amp;&amp; h.state === 'cooked') {
-    KitchenAPI.command(0, 'plating_0');
-    return;
-  }
+  if (!h) { KitchenAPI.command(0, meatReady ? 'dishrack_0' : 'bin_3'); return; }
+  if (h.ingredient === 'meat' && h.state === 'raw')    { KitchenAPI.command(0, 'stove_0');   return; }
+  if (h.ingredient === 'meat' && h.state === 'cooked') { KitchenAPI.command(0, 'plating_0'); return; }
   if (h.type === 'plate') {
-    const done = h.items &amp;&amp; h.items.some(
-      i => i.ingredient === 'meat' &amp;&amp; i.state === 'cooked'
-    );
+    const done = h.items && h.items.some(i => i.ingredient === 'meat' && i.state === 'cooked');
     KitchenAPI.command(0, done ? steak.standId : 'plating_0');
   }
 });</code></pre>
 
-    <h3>Example 2: Simple multi-chef coordinator</h3>
-    <p>Chef 0 cooks meat; Chef 1 chops lettuce for Salad; Chef 2 plates and delivers the most urgent order it can satisfy (very rough heuristic).</p>
+    <h3>Example 2 — Simple multi-chef coordinator</h3>
+    <p>Chef 0 cooks meat; Chef 1 chops lettuce for Salad; Chef 2 plates and delivers the most urgent available order.</p>
     <pre><code>function go(id, station) {
   const s = KitchenAPI.getState();
   const c = s.chefs[id];
@@ -367,47 +452,39 @@ KitchenAPI.onTick(() => {
   const s = KitchenAPI.getState();
   if (!s.running || s.paused) return;
 
-  // Chef 0: keep meat flowing to stove_0 when holding raw meat
+  // Chef 0: cycle meat through stove → plating_0
   const c0 = s.chefs[0];
-  if (c0 &amp;&amp; !c0.busy &amp;&amp; !c0.hasPath) {
+  if (!c0.busy && !c0.hasPath) {
     const h = c0.holding;
     if (!h) go(0, 'bin_3');
-    else if (h.ingredient === 'meat' &amp;&amp; h.state === 'raw') go(0, 'stove_0');
-    else if (h.ingredient === 'meat' &amp;&amp; h.state === 'cooked') go(0, 'plating_0');
+    else if (h.ingredient === 'meat' && h.state === 'raw')    go(0, 'stove_0');
+    else if (h.ingredient === 'meat' && h.state === 'cooked') go(0, 'plating_0');
   }
 
-  // Chef 1: chop lettuce for salads when we see a Salad order
+  // Chef 1: chop lettuce whenever a Salad order exists
   const c1 = s.chefs[1];
-  if (c1 &amp;&amp; !c1.busy &amp;&amp; !c1.hasPath &amp;&amp; s.orders.some(o => o.dish === 'Salad')) {
+  if (!c1.busy && !c1.hasPath && s.orders.some(o => o.dish === 'Salad')) {
     const h = c1.holding;
     if (!h) go(1, 'bin_1');
-    else if (h.ingredient === 'lettuce' &amp;&amp; h.state === 'raw') go(1, 'cutting_0');
-    else if (h.ingredient === 'lettuce' &amp;&amp; h.state === 'chopped') go(1, 'plating_1');
+    else if (h.ingredient === 'lettuce' && h.state === 'raw')     go(1, 'cutting_0');
+    else if (h.ingredient === 'lettuce' && h.state === 'chopped') go(1, 'plating_1');
   }
 
-  // Chef 2: plate + deliver — pick urgent order, grab plate, merge at plating_1, walk to stand
+  // Chef 2: grab plate → merge at plating_1 → deliver most urgent order
   const c2 = s.chefs[2];
   if (!c2 || c2.busy || c2.hasPath) return;
   const urgent = [...s.orders].sort((a, b) => a.timeLeft - b.timeLeft)[0];
   if (!urgent) return;
   const h2 = c2.holding;
-  if (!h2) {
-    go(2, 'dishrack_0');
-    return;
-  }
-  if (h2.type === 'plate' &amp;&amp; (!h2.items || h2.items.length === 0)) {
-    go(2, 'plating_1');
-    return;
-  }
-  if (h2.type === 'plate' &amp;&amp; h2.items &amp;&amp; h2.items.length &gt; 0) {
-    go(2, urgent.standId);
-  }
+  if (!h2)                                          { go(2, 'dishrack_0'); return; }
+  if (h2.type === 'plate' && !h2.items?.length)     { go(2, 'plating_1');  return; }
+  if (h2.type === 'plate' &&  h2.items?.length > 0) { go(2, urgent.standId); }
 });</code></pre>
 
     <footer>
-        <p>Built for <strong>Hack the 6ix 2026</strong> — Toronto’s largest summer hackathon.</p>
-        <p><a href="index.html">← Back to Game</a></p>
-        <p>Questions? Reach out on the official Hack the 6ix Discord or event channels.</p>
+        <p>Built for <strong>Hack the 6ix 2026</strong> — Toronto's largest summer hackathon.</p>
+        <p style="margin-top:8px;"><a href="game.html">← Back to Game</a></p>
     </footer>
+</div>
 </body>
 </html>

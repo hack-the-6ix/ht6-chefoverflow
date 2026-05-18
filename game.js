@@ -13,6 +13,9 @@ const MAP_HEIGHT = 14;
 canvas.width = MAP_WIDTH * CELL_SIZE;
 canvas.height = MAP_HEIGHT * CELL_SIZE;
 
+const floorImg = new Image();
+floorImg.src = 'assets/floor.png';
+
 // =============================================
 // GAME STATE
 // =============================================
@@ -128,34 +131,35 @@ function getRecipeNamesForSpawn(time) {
 function baseOrderSpawnInterval(time, rushActive) {
     let normal;
     if (time < 60) {
-        normal = 23 - smoothstep01(time, 0, 55) * 7;
+        normal = 20 - smoothstep01(time, 0, 55) * 8;       // 20→12s
     } else if (time < 150) {
-        normal = 15.5 - smoothstep01(time, 60, 145) * 4;
+        normal = 12 - smoothstep01(time, 60, 145) * 4;     // 12→8s
+    } else if (time < 600) {
+        normal = 8 - smoothstep01(time, 150, 580) * 4;     // 8→4s
     } else {
-        const u = smoothstep01(time, 150, 580);
-        normal = 11.5 - u * 5;
-        if (time >= 600) normal *= 0.9;
+        normal = Math.max(2.5, 4 - (time - 600) * 0.003);  // 4→2.5s over ~500s
     }
     if (rushActive) normal *= 0.52;
     const perf = getPerformanceAdjustment();
-    return Math.max(2.75, normal * (1 - perf * 0.35));
+    return Math.max(2.5, normal * (1 - perf * 0.35));
 }
 
 function orderTimeLimitForSpawn(time) {
     const phase = getPhaseKey(time);
     if (phase === 'tutorial') {
-        return 64 + Math.floor(Math.random() * 6);
+        return 52 + Math.floor(Math.random() * 6);          // 52–58s
     }
     if (phase === 'ramp') {
-        return 50 + Math.floor(Math.random() * 6);
+        return 40 + Math.floor(Math.random() * 6);          // 40–46s
     }
-    let sec = 42;
-    if (phase === 'automation' || phase === 'endurance') {
+    let sec;
+    if (phase === 'endurance') {
+        sec = Math.max(14, 22 - (time - 600) * 0.012);     // 22→14s over ~667s
+    } else {
         const u = smoothstep01(time, 150, 520);
-        sec = Math.round(42 - u * 11);
+        sec = Math.round(38 - u * 16);                      // 38→22s
     }
-    if (phase === 'endurance') sec -= 3;
-    sec = Math.max(24, sec);
+    sec = Math.max(14, sec);
     const perf = getPerformanceAdjustment();
     sec = Math.round(sec * (1 - perf * 0.22));
     return sec + Math.floor(Math.random() * 5);
@@ -165,14 +169,13 @@ function computeDifficulty(time) {
     const phase = getPhaseKey(time);
     let base;
     if (phase === 'tutorial') {
-        base = 1.0 + smoothstep01(time, 0, 58) * 0.14;
+        base = 1.0 + smoothstep01(time, 0, 58) * 0.1;      // 1.0→1.1
     } else if (phase === 'ramp') {
-        base = 1.14 + smoothstep01(time, 60, 148) * 0.44;
+        base = 1.1 + smoothstep01(time, 60, 148) * 0.5;    // 1.1→1.6
     } else if (phase === 'automation') {
-        base = 1.58 + smoothstep01(time, 150, 595) * 1.16;
+        base = 1.6 + smoothstep01(time, 150, 595) * 1.6;   // 1.6→3.2
     } else {
-        const d600 = 1.58 + 1.16;
-        base = d600 + (time - 600) * 0.0032;
+        base = 3.2 + (time - 600) * 0.006;                  // +0.006/s, hits 5.0 at ~t=937
     }
     return Math.max(1.0, base * (1 + getPerformanceAdjustment()));
 }
@@ -338,9 +341,9 @@ const ScoreGuard = (() => {
 function floorFillColor(x, y) {
     const light = (x + y) % 2 === 0;
     if (x >= 14) {
-        return light ? '#252838' : '#1c2034';
+        return light ? '#1D1455' : '#180F48';
     }
-    return light ? '#1e2a38' : '#1c2836';
+    return light ? '#1A1250' : '#150E42';
 }
 
 function drawRoundedHBar(px, py, w, h, progress01, fillColor, trackColor) {
@@ -1338,15 +1341,13 @@ function drawFloatingTexts() {
 let lastTime = 0;
 
 function gameLoop(currentTime) {
-    if (!GameState.running) return;
-    
     const deltaTime = (currentTime - lastTime) / 1000;
     lastTime = currentTime;
-    
-    if (!GameState.paused) {
+
+    if (GameState.running && !GameState.paused) {
         update(deltaTime);
     }
-    
+
     render();
     requestAnimationFrame(gameLoop);
 }
@@ -1585,22 +1586,28 @@ function updateOrders(dt) {
 function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    for (let y = 0; y < MAP_HEIGHT; y++) {
-        for (let x = 0; x < MAP_WIDTH; x++) {
-            if (map[y][x] === TILE_TYPES.FLOOR) {
+    if (floorImg.complete && floorImg.naturalWidth > 0) {
+        ctx.drawImage(floorImg, 0, 0);
+    } else {
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            for (let x = 0; x < MAP_WIDTH; x++) {
                 ctx.fillStyle = floorFillColor(x, y);
                 ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
-            } else {
-                drawTile(x, y, map[y][x]);
+            }
+        }
+        ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+        ctx.lineWidth = 1;
+        for (let y = 0; y < MAP_HEIGHT; y++) {
+            for (let x = 0; x < MAP_WIDTH; x++) {
+                ctx.strokeRect(x * CELL_SIZE + 0.5, y * CELL_SIZE + 0.5, CELL_SIZE - 1, CELL_SIZE - 1);
             }
         }
     }
-
-    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-    ctx.lineWidth = 1;
     for (let y = 0; y < MAP_HEIGHT; y++) {
         for (let x = 0; x < MAP_WIDTH; x++) {
-            ctx.strokeRect(x * CELL_SIZE + 0.5, y * CELL_SIZE + 0.5, CELL_SIZE - 1, CELL_SIZE - 1);
+            if (map[y][x] !== TILE_TYPES.FLOOR) {
+                drawTile(x, y, map[y][x]);
+            }
         }
     }
     
@@ -1727,6 +1734,7 @@ function drawStations() {
 
         ctx.fillStyle = stove.cooking ? COLORS.stoveOn : COLORS.stove;
         ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+        SkinStore.draw(SKIN_SOURCES.station.stove, px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
 
         ctx.strokeStyle = stove.cooking ? '#ffeb3b' : '#666';
         ctx.lineWidth = 3;
@@ -1786,7 +1794,9 @@ function drawStations() {
 
         ctx.fillStyle = '#8d6e63';
         ctx.fillRect(px + 4, py + 4, CELL_SIZE - 8, CELL_SIZE - 8);
+        const drewRackSkin = SkinStore.draw(SKIN_SOURCES.station.dishRack, px + 4, py + 4, CELL_SIZE - 8, CELL_SIZE - 8);
 
+        if (!drewRackSkin) {
         for (let s = 0; s < 3; s++) {
             const oy = s * 2.5;
             ctx.fillStyle = '#eceff1';
@@ -1796,6 +1806,7 @@ function drawStations() {
             ctx.strokeStyle = '#cfd8dc';
             ctx.lineWidth = 1;
             ctx.stroke();
+        }
         }
 
         ctx.fillStyle = '#fff';
@@ -1829,7 +1840,9 @@ function drawStations() {
 
         ctx.fillStyle = COLORS.cuttingBoard;
         ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+        const drewBoardSkin = SkinStore.draw(SKIN_SOURCES.station.cuttingBoard, px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
 
+        if (!drewBoardSkin) {
         ctx.strokeStyle = 'rgba(0,0,0,0.2)';
         ctx.lineWidth = 1;
         for (let i = 0; i < 3; i++) {
@@ -1837,6 +1850,7 @@ function drawStations() {
             ctx.moveTo(px + 8, py + 12 + i * 10);
             ctx.lineTo(px + CELL_SIZE - 8, py + 12 + i * 10);
             ctx.stroke();
+        }
         }
 
         if (board.processing) {
@@ -1863,7 +1877,9 @@ function drawStations() {
 
         ctx.fillStyle = COLORS.platingArea;
         ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+        const drewPlatingSkin = SkinStore.draw(SKIN_SOURCES.station.platingArea, px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
 
+        if (!drewPlatingSkin) {
         ctx.fillStyle = '#fff';
         ctx.beginPath();
         ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 16, 0, Math.PI * 2);
@@ -1871,6 +1887,7 @@ function drawStations() {
         ctx.strokeStyle = '#ddd';
         ctx.lineWidth = 2;
         ctx.stroke();
+        }
 
         let plateItems = [];
         if (plate.items.length === 1 && plate.items[0].type === 'plate') {
@@ -1910,19 +1927,22 @@ function drawStations() {
         const py = sink.y * CELL_SIZE;
         ctx.fillStyle = '#90a4ae';
         ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-        ctx.fillStyle = 'rgba(100, 181, 246, 0.35)';
-        ctx.beginPath();
-        ctx.roundRect(px + 8, py + 8, CELL_SIZE - 16, CELL_SIZE - 16, 8);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.roundRect(px + 8, py + 8, CELL_SIZE - 16, CELL_SIZE - 16, 8);
-        ctx.stroke();
-        ctx.font = '22px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('SNK', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+        const drewSinkSkin = SkinStore.draw(SKIN_SOURCES.station.sink, px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+        if (!drewSinkSkin) {
+            ctx.fillStyle = 'rgba(100, 181, 246, 0.35)';
+            ctx.beginPath();
+            ctx.roundRect(px + 8, py + 8, CELL_SIZE - 16, CELL_SIZE - 16, 8);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.roundRect(px + 8, py + 8, CELL_SIZE - 16, CELL_SIZE - 16, 8);
+            ctx.stroke();
+            ctx.font = '22px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('SNK', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+        }
     }
 
     for (const trash of stations.trashCans) {
@@ -1930,10 +1950,13 @@ function drawStations() {
         const py = trash.y * CELL_SIZE;
         ctx.fillStyle = '#263238';
         ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
-        ctx.font = '24px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('TRH', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+        const drewTrashSkin = SkinStore.draw(SKIN_SOURCES.station.trash, px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+        if (!drewTrashSkin) {
+            ctx.font = '24px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('TRH', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
+        }
     }
 
     for (let si = 0; si < stations.receptionStands.length; si++) {
@@ -1944,6 +1967,7 @@ function drawStations() {
 
         ctx.fillStyle = COLORS.receptionStand;
         ctx.fillRect(px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+        SkinStore.draw(SKIN_SOURCES.station.receptionStand, px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
 
         ctx.fillStyle = 'rgba(0,0,0,0.55)';
         ctx.fillRect(px + 5, py + 5, 16, 13);
@@ -1971,7 +1995,7 @@ function drawStations() {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillStyle = '#fff';
-            const drewOrderSkin = SkinStore.draw(SKIN_SOURCES.order[stand.order.dish], px + 14, py + 14, CELL_SIZE - 28, CELL_SIZE - 28);
+            const drewOrderSkin = SkinStore.draw(SKIN_SOURCES.order[stand.order.dish], px + 8, py + 8, CELL_SIZE - 16, CELL_SIZE - 16);
             if (!drewOrderSkin) ctx.fillText(stand.order.icon || RECIPE_ICON_BY_NAME[stand.order.dish] || 'ORD', px + CELL_SIZE / 2, py + CELL_SIZE / 2);
 
             ctx.strokeStyle = '#fff';
@@ -2113,23 +2137,26 @@ function drawChef(chef) {
         ctx.stroke();
     }
 
-    ctx.fillStyle = COLORS.chef[chef.id];
-    ctx.beginPath();
-    ctx.roundRect(px + 5, py + 10, CELL_SIZE - 10, CELL_SIZE - 16, 7);
-    ctx.fill();
+    const drewChefSkin = SkinStore.draw(SKIN_SOURCES.chef[chef.id], px + 2, py + 2, CELL_SIZE - 4, CELL_SIZE - 4);
+    if (!drewChefSkin) {
+        ctx.fillStyle = COLORS.chef[chef.id];
+        ctx.beginPath();
+        ctx.roundRect(px + 5, py + 10, CELL_SIZE - 10, CELL_SIZE - 16, 7);
+        ctx.fill();
 
-    ctx.fillStyle = 'rgba(0,0,0,0.28)';
-    ctx.fillRect(px + 11, py + 11, CELL_SIZE - 22, 10);
+        ctx.fillStyle = 'rgba(0,0,0,0.28)';
+        ctx.fillRect(px + 11, py + 11, CELL_SIZE - 22, 10);
 
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(px + 12, py + 4, CELL_SIZE - 24, 10);
-    ctx.fillRect(px + 10, py + 10, CELL_SIZE - 20, 4);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(px + 12, py + 4, CELL_SIZE - 24, 10);
+        ctx.fillRect(px + 10, py + 10, CELL_SIZE - 20, 4);
 
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 17px system-ui, "Segoe UI", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText((chef.id + 1).toString(), cx, cy + 3);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 17px system-ui, "Segoe UI", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText((chef.id + 1).toString(), cx, cy + 3);
+    }
 
     if (chef.holding) {
         const bx = px + CELL_SIZE - 4;
@@ -2206,19 +2233,44 @@ function drawChef(chef) {
 
 function drawLabels() {
     const h = MAP_HEIGHT * CELL_SIZE;
-    const bannerH = 22;
+    const bannerH = 28;
     const y0 = h - bannerH;
 
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fillRect(0, y0, 13 * CELL_SIZE, bannerH);
-    ctx.fillRect(14 * CELL_SIZE, y0, 6 * CELL_SIZE, bannerH);
+    // Kitchen zone
+    const kitchenW = 13 * CELL_SIZE;
+    const grad1 = ctx.createLinearGradient(0, y0, 0, h);
+    grad1.addColorStop(0, 'rgba(68,217,184,0.10)');
+    grad1.addColorStop(1, 'rgba(0,0,0,0.45)');
+    ctx.fillStyle = grad1;
+    ctx.fillRect(0, y0, kitchenW, bannerH);
 
-    ctx.fillStyle = 'rgba(200, 210, 220, 0.88)';
-    ctx.font = '14px system-ui, "Segoe UI", sans-serif';
+    // Teal accent line top
+    ctx.fillStyle = 'rgba(68,217,184,0.55)';
+    ctx.fillRect(0, y0, kitchenW, 2);
+
+    // Service zone
+    const svcX = 14 * CELL_SIZE;
+    const svcW = 6 * CELL_SIZE;
+    const grad2 = ctx.createLinearGradient(0, y0, 0, h);
+    grad2.addColorStop(0, 'rgba(162,89,255,0.12)');
+    grad2.addColorStop(1, 'rgba(0,0,0,0.45)');
+    ctx.fillStyle = grad2;
+    ctx.fillRect(svcX, y0, svcW, bannerH);
+
+    ctx.fillStyle = 'rgba(162,89,255,0.55)';
+    ctx.fillRect(svcX, y0, svcW, 2);
+
+    // Labels
+    ctx.font = 'bold 11px system-ui, "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('KITCHEN', 6.5 * CELL_SIZE, y0 + bannerH / 2);
-    ctx.fillText('SERVICE', 16.5 * CELL_SIZE, y0 + bannerH / 2);
+    const midY = y0 + bannerH / 2 + 1;
+
+    ctx.fillStyle = 'rgba(68,217,184,0.95)';
+    ctx.fillText('K I T C H E N', kitchenW / 2, midY);
+
+    ctx.fillStyle = 'rgba(200,160,255,0.95)';
+    ctx.fillText('S E R V I C E', svcX + svcW / 2, midY);
 }
 
 // =============================================
@@ -2226,6 +2278,17 @@ function drawLabels() {
 // =============================================
 let lastDisplayedStreak = 0;
 const LEADERBOARD_KEY = 'chefOverflowLeaderboardV1';
+
+// Supabase client — credentials defined in game.html before this script loads.
+const _db = (typeof window.supabase !== 'undefined' && typeof SUPABASE_URL !== 'undefined' && SUPABASE_URL !== 'https://YOUR_PROJECT.supabase.co')
+    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
+
+function maskEmail(email) {
+    const [local, domain] = email.split('@');
+    if (!domain) return email;
+    return local.slice(0, 1) + '***@' + domain;
+}
 
 function loadLeaderboard() {
     try {
@@ -2241,20 +2304,87 @@ function saveLeaderboard(entries) {
     localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(entries.slice(0, 10)));
 }
 
-function renderLeaderboard() {
+async function fetchTopScores() {
+    if (!_db) return null;
+    try {
+        const { data, error } = await _db
+            .from('leaderboard')
+            .select('score')
+            .order('score', { ascending: false })
+            .limit(10);
+        return error ? null : data;
+    } catch (e) {
+        return null;
+    }
+}
+
+function lbRowHTML(score, i) {
+    const rankClass = i < 3 ? ` lb-rank-${i + 1}` : '';
+    return `<div class="lb-score-row${rankClass}">` +
+        `<span class="lb-medal">${i + 1}</span>` +
+        `<span class="lb-score-num">${score.toLocaleString()}</span>` +
+        `</div>`;
+}
+
+async function renderSideLeaderboard() {
+    const mount = document.getElementById('side-lb-list');
+    if (!mount) return;
+    const scores = await fetchTopScores();
+    if (!scores || scores.length === 0) {
+        mount.innerHTML = '<div class="orders-empty">No scores yet.</div>';
+        return;
+    }
+    mount.innerHTML = scores.map((e, i) =>
+        `<div class="lb-score-row${i === 0 ? ' lb-rank-1' : ''}">
+            <span class="lb-score-rank">#${i + 1}</span>
+            <span>${e.score.toLocaleString()}</span>
+        </div>`
+    ).join('');
+}
+
+async function fetchGlobalLeaderboard() {
+    if (!_db) return null;
+    try {
+        const { data, error } = await _db
+            .from('leaderboard')
+            .select('email, score, grade, streak, delivered')
+            .order('score', { ascending: false })
+            .limit(10);
+        return error ? null : data;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function renderLeaderboard() {
     const mount = document.getElementById('leaderboard-list');
     if (!mount) return;
+
+    const global = await fetchGlobalLeaderboard();
+    if (global && global.length > 0) {
+        mount.innerHTML = global.map((e, i) =>
+            `<div class="lb-score-row${i === 0 ? ' lb-rank-1' : ''}">
+                <span class="lb-score-rank">#${i + 1}</span>
+                <span>${e.score.toLocaleString()}</span>
+            </div>`
+        ).join('');
+        return;
+    }
+
     const entries = loadLeaderboard();
     if (entries.length === 0) {
         mount.innerHTML = '<div class="orders-empty">No verified runs yet.</div>';
         return;
     }
-    mount.innerHTML = entries.map((e, i) => {
-        return `<div class="lb-row"><span>#${i + 1} ${e.handle}</span><span>${e.score}</span></div>`;
-    }).join('');
+    mount.innerHTML = entries.map((e, i) =>
+        `<div class="lb-score-row${i === 0 ? ' lb-rank-1' : ''}">
+            <span class="lb-score-rank">#${i + 1}</span>
+            <span>${e.score.toLocaleString()}</span>
+        </div>`
+    ).join('');
 }
 
-function submitVerifiedScore() {
+async function submitVerifiedScore() {
     const statusEl = document.getElementById('leaderboard-status');
     if (!statusEl) return;
     if (!GameState.gameOver) {
@@ -2265,21 +2395,47 @@ function submitVerifiedScore() {
         statusEl.textContent = 'Run rejected: score integrity check failed.';
         return;
     }
-    const input = document.getElementById('leaderboard-handle');
-    const handle = (input?.value || 'anonymous').trim().slice(0, 16) || 'anonymous';
-    const entries = loadLeaderboard();
-    entries.push({
-        handle,
+    const input = document.getElementById('leaderboard-email');
+    const email = (input?.value || '').trim();
+    if (!email || !email.includes('@')) {
+        statusEl.textContent = 'Please enter a valid email address.';
+        return;
+    }
+
+    const entry = {
+        email,
         score: Math.floor(GameState.score),
+        grade: gradeFromScore(GameState.score).letter,
+        streak: GameState.bestStreak,
         delivered: GameState.ordersDelivered,
-        time: Math.floor(GameState.time),
+        time_secs: Math.floor(GameState.time),
         proof: ScoreGuard.receipt(),
-        at: Date.now()
-    });
-    entries.sort((a, b) => b.score - a.score);
-    saveLeaderboard(entries);
-    statusEl.textContent = 'Verified score submitted.';
-    renderLeaderboard();
+    };
+
+    // Always save locally as fallback
+    const local = loadLeaderboard();
+    local.push({ ...entry, handle: email, time: entry.time_secs, at: Date.now() });
+    local.sort((a, b) => b.score - a.score);
+    saveLeaderboard(local);
+
+    if (_db) {
+        statusEl.textContent = 'Submitting…';
+        try {
+            const { error } = await _db.from('leaderboard').insert(entry);
+            if (error) {
+                statusEl.textContent = 'Saved locally — could not reach global leaderboard.';
+            } else {
+                statusEl.textContent = 'Score submitted to global leaderboard!';
+                renderSideLeaderboard();
+            }
+        } catch (e) {
+            statusEl.textContent = 'Saved locally — could not reach global leaderboard.';
+        }
+    } else {
+        statusEl.textContent = 'Saved locally (Supabase not configured).';
+    }
+
+    await renderLeaderboard();
 }
 
 function updateUI() {
@@ -2477,8 +2633,10 @@ canvas.addEventListener('click', (e) => {
     if (!GameState.running || GameState.paused) return;
     
     const rect = canvas.getBoundingClientRect();
-    const x = Math.floor((e.clientX - rect.left) / CELL_SIZE);
-    const y = Math.floor((e.clientY - rect.top) / CELL_SIZE);
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = Math.floor((e.clientX - rect.left) * scaleX / CELL_SIZE);
+    const y = Math.floor((e.clientY - rect.top) * scaleY / CELL_SIZE);
     
     // Check if clicked on a chef
     const clickedChef = chefs.find(c => c.x === x && c.y === y);
@@ -2605,7 +2763,6 @@ function startGame() {
     document.body.classList.add('game-running');
 
     lastTime = performance.now();
-    requestAnimationFrame(gameLoop);
 }
 
 function togglePause() {
@@ -2886,11 +3043,13 @@ window.KitchenAPI = {
     togglePause: togglePause
 };
 
-// Initial render
 SkinStore.init();
 initChefs();
-render();
+lastTime = performance.now();
+requestAnimationFrame(gameLoop);
 renderLeaderboard();
+renderSideLeaderboard();
+setInterval(renderSideLeaderboard, 30_000);
 
 console.log(`
 Chef Overflow v2.0
