@@ -252,14 +252,18 @@
             </ul>
             <hr class="game-over-hr">
             <div class="game-over-submit-placeholder">
-                <label class="sr-only" for="leaderboard-email">Email</label>
-                <input type="email" id="leaderboard-email" class="leaderboard-handle-input" placeholder="your@email.com">
-                <p class="leaderboard-email-hint">Used for the global leaderboard. Pre-filled by HT6 Auth when available.</p>
-                <button type="button" id="submit-score-btn" class="small-btn">Submit to leaderboard</button>
-                <div id="run-receipt" class="leaderboard-receipt"></div>
-                <div id="leaderboard-status" class="leaderboard-status"></div>
-                <div class="lb-header" style="margin-top:12px;">Top Scores</div>
-                <div id="leaderboard-list" class="leaderboard-list"></div>
+                <div class="leaderboard-submit-form">
+                    <label class="sr-only" for="leaderboard-email">Email</label>
+                    <input type="email" id="leaderboard-email" class="leaderboard-handle-input" placeholder="your@email.com">
+                    <p class="leaderboard-email-hint">Used for the global leaderboard. Pre-filled by HT6 Auth when available.</p>
+                    <button type="button" id="submit-score-btn" class="small-btn">Submit to leaderboard</button>
+                    <div id="run-receipt" class="leaderboard-receipt"></div>
+                    <div id="leaderboard-status" class="leaderboard-status"></div>
+                </div>
+                <div class="leaderboard-section">
+                    <div class="lb-header">Top Scores</div>
+                    <div id="leaderboard-list" class="leaderboard-list"></div>
+                </div>
             </div>
             <div class="game-over-actions">
                 <button type="button" id="share-btn" class="btn-share">Share</button>
