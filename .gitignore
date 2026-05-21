@@ -1,0 +1,11 @@
+# Supabase CLI local cache
+supabase/.temp/
+
+# macOS
+.DS_Store
+
+# Editor / OS junk
+*.swp
+*.swo
+.vscode/
+.idea/

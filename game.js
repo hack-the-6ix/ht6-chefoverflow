@@ -2208,9 +2208,38 @@ let lastDisplayedStreak = 0;
 const LEADERBOARD_KEY = 'chefOverflowLeaderboardV1';
 
 // Supabase client, credentials defined in game.html before this script loads.
+// Used only for SELECTs (leaderboard table is read-only to anon). All writes go through Edge Functions.
 const _db = (typeof window.supabase !== 'undefined' && typeof SUPABASE_URL !== 'undefined' && SUPABASE_URL !== 'https://YOUR_PROJECT.supabase.co')
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     : null;
+
+const _fnBase = (typeof SUPABASE_URL !== 'undefined' && SUPABASE_URL !== 'https://YOUR_PROJECT.supabase.co')
+    ? `${SUPABASE_URL}/functions/v1`
+    : null;
+
+let _runToken = null; // { run_id, token } issued by start-run
+
+async function startRun() {
+    _runToken = null;
+    if (!_fnBase) return;
+    try {
+        const res = await fetch(`${_fnBase}/start-run`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'apikey': SUPABASE_ANON_KEY,
+                'authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.run_id && data.token) {
+            _runToken = { run_id: data.run_id, token: data.token };
+        }
+    } catch (e) {
+        // Network failure; submit will surface its own error if attempted.
+    }
+}
 
 function maskEmail(email) {
     const [local, domain] = email.split('@');
@@ -2322,30 +2351,68 @@ async function submitVerifiedScore() {
         streak: GameState.bestStreak,
         delivered: GameState.ordersDelivered,
         time_secs: Math.floor(GameState.time),
-        proof: ScoreGuard.receipt(),
     };
 
-    // Always save locally as fallback
+    // Always save locally as fallback (private to this browser, doesn't affect global board).
     const local = loadLeaderboard();
     local.push({ ...entry, handle: email, time: entry.time_secs, at: Date.now() });
     local.sort((a, b) => b.score - a.score);
     saveLeaderboard(local);
 
-    if (_db) {
-        statusEl.textContent = 'Submitting…';
-        try {
-            const { error } = await _db.from('leaderboard').insert(entry);
-            if (error) {
-                statusEl.textContent = 'Saved locally, could not reach global leaderboard.';
-            } else {
-                statusEl.textContent = 'Score submitted to global leaderboard!';
-                renderSideLeaderboard();
-            }
-        } catch (e) {
-            statusEl.textContent = 'Saved locally, could not reach global leaderboard.';
-        }
-    } else {
+    if (!_fnBase) {
         statusEl.textContent = 'Saved locally (Supabase not configured).';
+        await renderLeaderboard();
+        return;
+    }
+    if (!_runToken) {
+        statusEl.textContent = 'No run token — refresh and play a fresh game before submitting.';
+        await renderLeaderboard();
+        return;
+    }
+
+    statusEl.textContent = 'Submitting…';
+    try {
+        const res = await fetch(`${_fnBase}/submit-score`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'apikey': SUPABASE_ANON_KEY,
+                'authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            },
+            body: JSON.stringify({
+                run_id: _runToken.run_id,
+                token: _runToken.token,
+                ...entry,
+            }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            const reason = data?.error || `http_${res.status}`;
+            const msg = ({
+                rate_limited: 'Please wait a bit before submitting again.',
+                implausible_score: 'Run rejected: score outside plausible range.',
+                implausible_delivered: 'Run rejected: delivery count not plausible.',
+                implausible_streak: 'Run rejected: streak not plausible.',
+                token_used: 'This run has already been submitted.',
+                token_expired: 'Run expired — start a new game to submit.',
+                too_fast: 'Run too short to submit.',
+                unknown_token: 'Run not recognized — start a new game.',
+                bad_signature: 'Run token invalid.',
+                bad_email: 'Please enter a valid email address.',
+            })[reason] || 'Submission rejected.';
+            statusEl.textContent = msg;
+        } else if (data?.kept_existing) {
+            statusEl.textContent = `Submitted — your previous best (${data.best.toLocaleString()}) still stands.`;
+            // Token is one-shot; clear it.
+            _runToken = null;
+            renderSideLeaderboard();
+        } else {
+            statusEl.textContent = 'Score submitted to global leaderboard!';
+            _runToken = null;
+            renderSideLeaderboard();
+        }
+    } catch (e) {
+        statusEl.textContent = 'Network error — saved locally, please try again.';
     }
 
     await renderLeaderboard();
@@ -2637,6 +2704,7 @@ function startGame() {
     GameState.time = 0;
     GameState.score = 0;
     ScoreGuard.reset();
+    startRun();
     GameState.difficulty = 1.0;
     GameState.streak = 0;
     GameState.bestStreak = 0;
