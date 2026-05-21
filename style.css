@@ -701,6 +701,8 @@ body.game-running #start-btn {
     display: block;
     max-width: 100%;
     height: auto;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
 }
 
 #legend {
@@ -1627,6 +1629,25 @@ body.game-running #start-btn {
 .leaderboard-status {
     font-size: var(--text-xs);
     color: var(--ht6-teal-light);
+}
+
+.desktop-recommended-notice {
+    font-size: var(--text-xs);
+    color: var(--text-secondary, #b8b8c8);
+    margin-top: 8px;
+    line-height: 1.4;
+    opacity: 0.85;
+}
+
+.leaderboard-offline-banner {
+    font-size: var(--text-xs);
+    color: #ffcf66;
+    background: rgba(255, 159, 64, 0.12);
+    border: 1px solid rgba(255, 159, 64, 0.35);
+    border-radius: var(--radius-sm);
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    line-height: 1.35;
 }
 
 .leaderboard-list {

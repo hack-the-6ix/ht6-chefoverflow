@@ -2231,14 +2231,25 @@ async function startRun() {
                 'authorization': `Bearer ${SUPABASE_ANON_KEY}`,
             },
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+            setLeaderboardOffline(true);
+            return;
+        }
         const data = await res.json();
         if (data && data.run_id && data.token) {
             _runToken = { run_id: data.run_id, token: data.token };
+            setLeaderboardOffline(false);
+        } else {
+            setLeaderboardOffline(true);
         }
     } catch (e) {
-        // Network failure; submit will surface its own error if attempted.
+        setLeaderboardOffline(true);
     }
+}
+
+function setLeaderboardOffline(isOffline) {
+    const banner = document.getElementById('leaderboard-offline-banner');
+    if (banner) banner.style.display = isOffline ? '' : 'none';
 }
 
 function maskEmail(email) {
@@ -2326,7 +2337,20 @@ async function renderLeaderboard() {
     mount.innerHTML = entries.map((e, i) => lbRowHTML(e.score, i)).join('');
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 async function submitVerifiedScore() {
+    const submitBtn = document.getElementById('submit-score-btn');
+    if (submitBtn && submitBtn.disabled) return;
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+        await _submitVerifiedScoreImpl();
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
+    }
+}
+
+async function _submitVerifiedScoreImpl() {
     const statusEl = document.getElementById('leaderboard-status');
     if (!statusEl) return;
     if (!GameState.gameOver) {
@@ -2339,7 +2363,7 @@ async function submitVerifiedScore() {
     }
     const input = document.getElementById('leaderboard-email');
     const email = (input?.value || '').trim();
-    if (!email || !email.includes('@')) {
+    if (!EMAIL_RE.test(email)) {
         statusEl.textContent = 'Please enter a valid email address.';
         return;
     }
@@ -2815,7 +2839,7 @@ if (shareBtn) {
         const score = document.getElementById('final-score')?.textContent || '0';
         const grade = document.getElementById('final-grade')?.textContent || '?';
         const streak = document.getElementById('best-streak')?.textContent || '0';
-        const text = `I scored ${score} in Chef Overflow (Grade: ${grade}, Streak: ${streak}). Can you beat me? https://example.com/chef`;
+        const text = `I scored ${score} in Chef Overflow (Grade: ${grade}, Streak: ${streak}). Can you beat me?`;
         navigator.clipboard.writeText(text).catch(() => {});
     });
 }
