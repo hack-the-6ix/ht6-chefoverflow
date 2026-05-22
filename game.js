@@ -848,6 +848,7 @@ function initChefs() {
             targetX: null,
             targetY: null,
             path: [],
+            blockedTicks: 0,
             holding: null,
             busy: false,
             actionTimer: 0,
@@ -930,7 +931,7 @@ function spawnOrder() {
 // =============================================
 // PATHFINDING (A*)
 // =============================================
-function findPath(startX, startY, endX, endY) {
+function findPath(startX, startY, endX, endY, avoid) {
     const openSet = [];
     const closedSet = new Set();
     const cameFrom = {};
@@ -955,7 +956,7 @@ function findPath(startX, startY, endX, endY) {
         
         closedSet.add(currentKey);
         
-        const neighbors = getNeighbors(current.x, current.y);
+        const neighbors = getNeighbors(current.x, current.y, avoid);
         for (const neighbor of neighbors) {
             const neighborKey = `${neighbor.x},${neighbor.y}`;
             if (closedSet.has(neighborKey)) continue;
@@ -981,16 +982,16 @@ function heuristic(x1, y1, x2, y2) {
     return Math.abs(x1 - x2) + Math.abs(y1 - y2);
 }
 
-function getNeighbors(x, y) {
+function getNeighbors(x, y, avoid) {
     const neighbors = [];
     const directions = [[0, -1], [0, 1], [-1, 0], [1, 0]];
-    
+
     for (const [dx, dy] of directions) {
         const nx = x + dx;
         const ny = y + dy;
-        
+
         if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
-            if (isWalkable(nx, ny)) {
+            if (isWalkable(nx, ny) && !(avoid && avoid.has(`${nx},${ny}`))) {
                 neighbors.push({ x: nx, y: ny });
             }
         }
@@ -1520,19 +1521,41 @@ function updateChef(chef, dt) {
     // Move along path with delay
     if (chef.path.length > 0 && chef.moveTimer >= moveDelay) {
         const next = chef.path[0];
-        
+
         // Check if another chef is at the target
         const blocked = chefs.some(c => c !== chef && c.x === next.x && c.y === next.y);
-        
-        if (!blocked) {
+
+        const step = () => {
             chef.x = next.x;
             chef.y = next.y;
             chef.path.shift();
-            
+            chef.blockedTicks = 0;
+
             // Check if reached destination
             if (chef.path.length === 0 && chef.targetStation) {
                 interactWithStation(chef, chef.targetStation);
                 chef.targetStation = null;
+            }
+        };
+
+        if (!blocked) {
+            step();
+        } else {
+            chef.blockedTicks++;
+            // Stuck on another chef: try to route around it, then force through
+            // to break swap deadlocks where no alternate route exists.
+            if (chef.blockedTicks >= 3) {
+                const dest = chef.path[chef.path.length - 1];
+                const avoid = new Set(
+                    chefs.filter(c => c !== chef).map(c => `${c.x},${c.y}`)
+                );
+                const detour = findPath(chef.x, chef.y, dest.x, dest.y, avoid);
+                if (detour.length > 0) {
+                    chef.path = detour;
+                    chef.blockedTicks = 0;
+                } else {
+                    step();
+                }
             }
         }
         chef.moveTimer = 0;
@@ -2217,6 +2240,143 @@ const _fnBase = (typeof SUPABASE_URL !== 'undefined' && SUPABASE_URL !== 'https:
     ? `${SUPABASE_URL}/functions/v1`
     : null;
 
+const HT6_API_URL = 'https://v2.api.hackthe6ix.com';
+const PENDING_RUN_KEY = 'chefOverflowPendingRun';
+let _ht6User = null;
+let _restoredRun = null;
+
+async function ht6CheckAuth() {
+    try {
+        const res = await fetch(`${HT6_API_URL}/api/auth/check`, {
+            credentials: 'include',
+            headers: { 'accept': 'application/json' },
+        });
+        if (!res.ok) return null;
+        const data = await res.json().catch(() => ({}));
+        const payload = data?.data ?? data;
+        const user = payload?.user || payload;
+        if (!user || !user.email) return null;
+        return user;
+    } catch (_) {
+        return null;
+    }
+}
+
+function ht6LoginUrl() {
+    const u = new URL(`${HT6_API_URL}/api/auth/login`);
+    u.searchParams.set('redirectUrl', window.location.href);
+    return u.toString();
+}
+
+function ht6UserDisplayName(user) {
+    if (!user) return '';
+    return [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+}
+
+function applySignedInUI() {
+    const signinCard = document.getElementById('auth-signin-card');
+    const identityCard = document.getElementById('auth-identity-card');
+    const submitBtn = document.getElementById('submit-score-btn');
+    const nameEl = document.getElementById('auth-identity-name');
+    const emailEl = document.getElementById('auth-identity-email');
+
+    if (signinCard) signinCard.hidden = true;
+    if (identityCard) identityCard.hidden = false;
+    if (submitBtn) submitBtn.hidden = false;
+    if (nameEl) nameEl.textContent = ht6UserDisplayName(_ht6User) || '—';
+    if (emailEl) emailEl.textContent = _ht6User.email;
+}
+
+function applySignedOutUI() {
+    const signinCard = document.getElementById('auth-signin-card');
+    const identityCard = document.getElementById('auth-identity-card');
+    const submitBtn = document.getElementById('submit-score-btn');
+    if (signinCard) signinCard.hidden = false;
+    if (identityCard) identityCard.hidden = true;
+    if (submitBtn) submitBtn.hidden = true;
+}
+
+function persistPendingRunForAuth() {
+    if (!_runToken || !GameState.gameOver) return;
+    try {
+        sessionStorage.setItem(PENDING_RUN_KEY, JSON.stringify({
+            runToken: _runToken,
+            stats: {
+                score: GameState.score,
+                bestStreak: GameState.bestStreak,
+                time: GameState.time,
+                ordersDelivered: GameState.ordersDelivered,
+                failedOrders: GameState.failedOrders,
+                difficulty: GameState.difficulty,
+            },
+            receipt: (() => { try { return ScoreGuard.receipt(); } catch (_) { return null; } })(),
+            verified: (() => { try { return ScoreGuard.verifyFinal(); } catch (_) { return false; } })(),
+            savedAt: Date.now(),
+        }));
+    } catch (_) {}
+}
+
+function restorePendingRunIfAny() {
+    let saved;
+    try {
+        const raw = sessionStorage.getItem(PENDING_RUN_KEY);
+        if (!raw) return false;
+        saved = JSON.parse(raw);
+        sessionStorage.removeItem(PENDING_RUN_KEY);
+    } catch (_) {
+        return false;
+    }
+    if (!saved || !saved.runToken) return false;
+
+    _runToken = saved.runToken;
+    _restoredRun = saved;
+    GameState.gameOver = true;
+    GameState.score = saved.stats.score;
+    GameState.bestStreak = saved.stats.bestStreak;
+    GameState.time = saved.stats.time;
+    GameState.ordersDelivered = saved.stats.ordersDelivered;
+    GameState.failedOrders = saved.stats.failedOrders;
+    GameState.difficulty = saved.stats.difficulty;
+
+    document.getElementById('final-score').textContent = Math.floor(saved.stats.score);
+    document.getElementById('best-streak').textContent = saved.stats.bestStreak;
+    const gradeEl = document.getElementById('final-grade');
+    if (gradeEl) {
+        const g = gradeFromScore(saved.stats.score);
+        gradeEl.textContent = g.letter;
+        gradeEl.className = 'grade-letter ' + g.cls;
+    }
+    const ft = document.getElementById('final-time');
+    if (ft) ft.textContent = formatTime(saved.stats.time);
+    const fd = document.getElementById('final-delivered');
+    if (fd) fd.textContent = String(saved.stats.ordersDelivered);
+    const ff = document.getElementById('final-failed');
+    if (ff) ff.textContent = String(saved.stats.failedOrders);
+    const fdiff = document.getElementById('final-difficulty');
+    if (fdiff) fdiff.textContent = saved.stats.difficulty.toFixed(1);
+    const receipt = document.getElementById('run-receipt');
+    if (receipt) receipt.textContent = saved.receipt ? `Run proof: ${saved.receipt}` : '';
+    document.getElementById('game-over').classList.remove('hidden');
+    return true;
+}
+
+async function initHt6Auth() {
+    const loginBtn = document.getElementById('ht6-login-btn');
+    if (loginBtn) {
+        loginBtn.addEventListener('click', () => {
+            persistPendingRunForAuth();
+            window.location.href = ht6LoginUrl();
+        });
+    }
+
+    _ht6User = await ht6CheckAuth();
+    if (_ht6User) {
+        applySignedInUI();
+    } else {
+        applySignedOutUI();
+    }
+}
+
 let _runToken = null; // { run_id, token } issued by start-run
 
 async function startRun() {
@@ -2357,14 +2517,18 @@ async function _submitVerifiedScoreImpl() {
         statusEl.textContent = 'Finish the run before submitting.';
         return;
     }
-    if (!ScoreGuard.verifyFinal()) {
+    const guardOk = (() => { try { return ScoreGuard.verifyFinal(); } catch (_) { return false; } })();
+    if (!guardOk && !_restoredRun?.verified) {
         statusEl.textContent = 'Run rejected: score integrity check failed.';
         return;
     }
-    const input = document.getElementById('leaderboard-email');
-    const email = (input?.value || '').trim();
+    if (!_ht6User?.email) {
+        statusEl.textContent = 'Sign in with Hack the 6ix to submit.';
+        return;
+    }
+    const email = _ht6User.email.trim();
     if (!EMAIL_RE.test(email)) {
-        statusEl.textContent = 'Please enter a valid email address.';
+        statusEl.textContent = 'Authenticated email is invalid — contact HT6 organizers.';
         return;
     }
 
@@ -2570,7 +2734,20 @@ function updateUI() {
         titleWrap.className = 'order-title-wrap';
         const emojiSpan = document.createElement('span');
         emojiSpan.className = 'order-emoji';
-        emojiSpan.textContent = order.icon || RECIPE_ICON_BY_NAME[order.dish] || 'ORD';
+        const orderSkinPath = SKIN_SOURCES.order[order.dish];
+        if (orderSkinPath) {
+            emojiSpan.classList.add('order-emoji-img');
+            const img = document.createElement('img');
+            img.src = orderSkinPath;
+            img.alt = order.dish;
+            img.onerror = () => {
+                emojiSpan.classList.remove('order-emoji-img');
+                emojiSpan.textContent = order.icon || RECIPE_ICON_BY_NAME[order.dish] || 'ORD';
+            };
+            emojiSpan.appendChild(img);
+        } else {
+            emojiSpan.textContent = order.icon || RECIPE_ICON_BY_NAME[order.dish] || 'ORD';
+        }
         const nameSpan = document.createElement('span');
         nameSpan.className = 'order-name';
         nameSpan.textContent = order.dish + (order.vip ? ' ' : '');
@@ -2595,8 +2772,25 @@ function updateUI() {
             const chip = document.createElement('span');
             const processed = c.state === 'chopped' || c.state === 'cooked' || c.state === 'burnt';
             chip.className = 'order-chip' + (processed ? ' chip-processed' : ' chip-raw');
-            const em = INGREDIENT_ICONS[c.ingredient] || '•';
-            chip.textContent = `${em} ${c.state}`;
+            const ingSkinPath = SKIN_SOURCES.ingredient[c.ingredient];
+            const stateLabel = document.createElement('span');
+            stateLabel.textContent = c.state;
+            if (ingSkinPath) {
+                const ingImg = document.createElement('img');
+                ingImg.className = 'order-chip-img';
+                ingImg.src = ingSkinPath;
+                ingImg.alt = c.ingredient;
+                ingImg.onerror = () => {
+                    ingImg.remove();
+                    const em = INGREDIENT_ICONS[c.ingredient] || '•';
+                    stateLabel.textContent = `${em} ${c.state}`;
+                };
+                chip.appendChild(ingImg);
+            } else {
+                const em = INGREDIENT_ICONS[c.ingredient] || '•';
+                stateLabel.textContent = `${em} ${c.state}`;
+            }
+            chip.appendChild(stateLabel);
             chips.appendChild(chip);
         }
         card.appendChild(chips);
@@ -3044,6 +3238,8 @@ requestAnimationFrame(gameLoop);
 renderLeaderboard();
 renderSideLeaderboard();
 setInterval(renderSideLeaderboard, 30_000);
+restorePendingRunIfAny();
+initHt6Auth();
 
 console.log(`
 Chef Overflow v2.0

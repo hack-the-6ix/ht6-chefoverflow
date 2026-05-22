@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chef Overflow</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=auth-ui-1">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -239,26 +239,54 @@
 
     <div id="game-over" class="hidden">
         <div class="game-over-modal">
-            <h1>Game Over</h1>
-            <div class="game-over-grade-row">
+            <div class="game-over-header">
                 <span id="final-grade" class="grade-letter grade-c">-</span>
-                <span class="grade-caption">Grade</span>
+                <div class="game-over-header-text">
+                    <h1>Game Over</h1>
+                    <span class="grade-caption">Final Grade</span>
+                </div>
             </div>
             <ul class="game-over-stats">
-                <li>Score: <span id="final-score">0</span></li>
-                <li>Best streak: <span id="best-streak">0</span></li>
-                <li>Time survived: <span id="final-time">0:00</span></li>
-                <li>Orders delivered: <span id="final-delivered">0</span></li>
-                <li>Orders failed: <span id="final-failed">0</span></li>
-                <li>Difficulty reached: <span id="final-difficulty">1.0</span>x</li>
+                <li><span class="stat-label">Score</span><span id="final-score" class="stat-value">0</span></li>
+                <li><span class="stat-label">Best streak</span><span id="best-streak" class="stat-value">0</span></li>
+                <li><span class="stat-label">Time survived</span><span id="final-time" class="stat-value">0:00</span></li>
+                <li><span class="stat-label">Delivered</span><span id="final-delivered" class="stat-value">0</span></li>
+                <li><span class="stat-label">Failed</span><span id="final-failed" class="stat-value">0</span></li>
+                <li><span class="stat-label">Difficulty</span><span class="stat-value"><span id="final-difficulty">1.0</span>x</span></li>
             </ul>
-            <hr class="game-over-hr">
             <div class="game-over-submit-placeholder">
                 <div class="leaderboard-submit-form">
-                    <label class="sr-only" for="leaderboard-email">Email</label>
-                    <input type="email" id="leaderboard-email" class="leaderboard-handle-input" placeholder="your@email.com">
-                    <p class="leaderboard-email-hint">Used for the global leaderboard. Pre-filled by HT6 Auth when available.</p>
-                    <button type="button" id="submit-score-btn" class="small-btn">Submit to leaderboard</button>
+                    <div id="auth-signin-card" class="auth-card auth-card--signin">
+                        <div class="auth-card-eyebrow">Submit to leaderboard</div>
+                        <div class="auth-card-title">Sign in with Hack the 6ix</div>
+                        <p class="auth-card-body">We'll use your HT6 account to claim your score. No typing required.</p>
+                        <button type="button" id="ht6-login-btn" class="btn-ht6-signin">
+                            <span class="btn-ht6-signin-spark" aria-hidden="true"></span>
+                            <span>Sign in with HT6</span>
+                        </button>
+                    </div>
+
+                    <div id="auth-identity-card" class="auth-card auth-card--identity" hidden>
+                        <div class="auth-card-head">
+                            <span class="auth-card-eyebrow">Signed in</span>
+                            <span class="auth-card-badge">HT6</span>
+                        </div>
+                        <div class="auth-identity-fields">
+                            <div class="auth-identity-field">
+                                <span class="auth-identity-label">Name</span>
+                                <span id="auth-identity-name" class="auth-identity-value">—</span>
+                            </div>
+                            <div class="auth-identity-field">
+                                <span class="auth-identity-label">Email</span>
+                                <span id="auth-identity-email" class="auth-identity-value">—</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="button" id="submit-score-btn" class="btn-submit-score" hidden>
+                        <span>Submit to leaderboard</span>
+                        <span class="btn-submit-arrow" aria-hidden="true">→</span>
+                    </button>
                     <div id="run-receipt" class="leaderboard-receipt"></div>
                     <div id="leaderboard-status" class="leaderboard-status"></div>
                 </div>
