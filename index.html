@@ -11,10 +11,33 @@
 </head>
 <body class="game-page">
     <header class="site-header">
-        <p class="docs-link-bar"><a href="docs.html">Agent API reference (docs.html)</a></p>
+        <p class="docs-link-bar">
+            <a href="docs.html">Agent API reference (docs.html)</a>
+            <span class="docs-link-sep" aria-hidden="true">·</span>
+            <button type="button" id="about-open-btn" class="docs-link-btn">About</button>
+        </p>
         <img src="logo.png" alt="Hack the 6ix" class="ht6-logo">
         <h1 id="game-title">Chef Overflow</h1>
     </header>
+
+    <div id="about-modal" class="about-modal hidden" role="dialog" aria-modal="true" aria-labelledby="about-modal-title">
+        <div class="about-modal-card">
+            <div class="about-modal-head">
+                <span class="about-modal-eyebrow">Welcome to</span>
+                <h2 id="about-modal-title">Chef Overflow</h2>
+            </div>
+            <div class="about-modal-body">
+                <p>You run a five-chef kitchen. Orders come in at the reception stands; each one lists the ingredients and preparation states required.</p>
+                <p>Click a chef to select them, then click a station to send them there. Take ingredients from bins, chop or cook them, drop them onto a plating area, then deliver the plate to the matching stand.</p>
+                <p>Three expired orders ends the run. After the first minute the pace gets too fast for one human, so the in-game API lets you automate a kitchen agent.</p>
+                <p class="about-modal-hint">Controls: <kbd>1</kbd>–<kbd>5</kbd> select chefs · <kbd>Space</kbd> pause · <kbd>Esc</kbd> deselect · <kbd>B</kbd> boost</p>
+            </div>
+            <div class="about-modal-actions">
+                <a href="docs.html" class="about-modal-secondary">Read the docs</a>
+                <button type="button" id="about-close-btn" class="about-modal-primary">Got it</button>
+            </div>
+        </div>
+    </div>
 
     <div id="game-container">
         <aside id="ui-panel">
@@ -266,12 +289,24 @@
                         </div>
                         <div class="auth-identity-fields">
                             <div class="auth-identity-field">
-                                <span class="auth-identity-label">Name</span>
-                                <span id="auth-identity-name" class="auth-identity-value">—</span>
+                                <span class="auth-identity-label">Account</span>
+                                <span id="auth-identity-name" class="auth-identity-value">HT6 account</span>
                             </div>
-                            <div class="auth-identity-field">
+                            <div id="auth-identity-email-row" class="auth-identity-field" hidden>
                                 <span class="auth-identity-label">Email</span>
-                                <span id="auth-identity-email" class="auth-identity-value">—</span>
+                                <span id="auth-identity-email" class="auth-identity-value"></span>
+                            </div>
+                            <div id="auth-email-input-row" class="auth-email-input-row" hidden>
+                                <label for="auth-email-input" class="auth-identity-label">Email for the leaderboard</label>
+                                <input
+                                    id="auth-email-input"
+                                    class="auth-email-input"
+                                    type="email"
+                                    inputmode="email"
+                                    autocomplete="email"
+                                    placeholder="you@example.com"
+                                    maxlength="254"
+                                />
                             </div>
                         </div>
                     </div>

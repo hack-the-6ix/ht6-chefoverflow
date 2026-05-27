@@ -1638,8 +1638,8 @@ function updateChef(chef, dt) {
             step();
         } else {
             chef.blockedTicks++;
-            // Stuck on another chef: try to route around it, then force through
-            // to break swap deadlocks where no alternate route exists.
+            // Stuck on another chef: try to route around it. Never force through,
+            // since two chefs may not share a tile.
             if (chef.blockedTicks >= 3) {
                 const dest = chef.path[chef.path.length - 1];
                 const avoid = new Set(
@@ -1649,8 +1649,12 @@ function updateChef(chef, dt) {
                 if (detour.length > 0) {
                     chef.path = detour;
                     chef.blockedTicks = 0;
-                } else {
-                    step();
+                } else if (chef.blockedTicks >= 30) {
+                    // No detour for a long time: abandon the path so the chef
+                    // can be reassigned instead of standing in a deadlock.
+                    chef.path = [];
+                    chef.targetStation = null;
+                    chef.blockedTicks = 0;
                 }
             }
         }
@@ -2326,15 +2330,16 @@ function drawLabels() {
 let lastDisplayedStreak = 0;
 const LEADERBOARD_KEY = 'chefOverflowLeaderboardV1';
 
-// Supabase client, credentials defined in game.html before this script loads.
-// Used only for SELECTs (leaderboard table is read-only to anon). All writes go through Edge Functions.
+// Supabase client, credentials defined in index.html before this script loads.
+// Used only for SELECTs (leaderboard table is read-only to anon). All writes go through /api/* functions
+// hosted on the co-domain (e.g. *.hackthe6ix.com) so they receive the HT6 session cookie.
 const _db = (typeof window.supabase !== 'undefined' && typeof SUPABASE_URL !== 'undefined' && SUPABASE_URL !== 'https://YOUR_PROJECT.supabase.co')
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     : null;
 
-const _fnBase = (typeof SUPABASE_URL !== 'undefined' && SUPABASE_URL !== 'https://YOUR_PROJECT.supabase.co')
-    ? `${SUPABASE_URL}/functions/v1`
-    : null;
+// Same-origin Vercel functions. These verify the HT6 session by forwarding
+// the inbound Cookie header to /api/auth/check.
+const _fnBase = '/api';
 
 const HT6_API_URL = 'https://v2.api.hackthe6ix.com';
 const PENDING_RUN_KEY = 'chefOverflowPendingRun';
@@ -2342,6 +2347,10 @@ let _ht6User = null;
 let _restoredRun = null;
 
 async function ht6CheckAuth() {
+    // Client-side liveness check: are we signed into HT6? The server independently
+    // re-verifies on submit by forwarding the inbound cookie. The response body is
+    // not documented; we parse it defensively and return whatever we get (or {} on
+    // empty body) so the UI knows the session is valid even without identity info.
     try {
         const res = await fetch(`${HT6_API_URL}/api/auth/check`, {
             headers: {
@@ -2350,11 +2359,15 @@ async function ht6CheckAuth() {
             },
         });
         if (!res.ok) return null;
-        const data = await res.json().catch(() => ({}));
-        const payload = data?.data ?? data;
-        const user = payload?.user || payload;
-        if (!user || !user.email) return null;
-        return user;
+        const text = await res.text();
+        if (!text) return {}; // signed in, no profile
+        try {
+            const data = JSON.parse(text);
+            const payload = data?.data ?? data;
+            return (payload && payload.user) || payload || {};
+        } catch (_) {
+            return {};
+        }
     } catch (_) {
         return null;
     }
@@ -2376,13 +2389,34 @@ function applySignedInUI() {
     const identityCard = document.getElementById('auth-identity-card');
     const submitBtn = document.getElementById('submit-score-btn');
     const nameEl = document.getElementById('auth-identity-name');
+    const emailRow = document.getElementById('auth-identity-email-row');
     const emailEl = document.getElementById('auth-identity-email');
+    const emailInputRow = document.getElementById('auth-email-input-row');
+    const emailInput = document.getElementById('auth-email-input');
 
     if (signinCard) signinCard.hidden = true;
     if (identityCard) identityCard.hidden = false;
     if (submitBtn) submitBtn.hidden = false;
-    if (nameEl) nameEl.textContent = ht6UserDisplayName(_ht6User) || '—';
-    if (emailEl) emailEl.textContent = _ht6User.email;
+
+    const knownName = ht6UserDisplayName(_ht6User);
+    const knownEmail = _ht6User && typeof _ht6User.email === 'string' ? _ht6User.email : '';
+
+    if (nameEl) nameEl.textContent = knownName || 'HT6 account';
+
+    // Show the email field if HT6 gave us one; otherwise show the input.
+    // The two rows are mutually exclusive so the card never reads as
+    // self-contradictory.
+    if (knownEmail) {
+        if (emailRow) emailRow.hidden = false;
+        if (emailEl) emailEl.textContent = knownEmail;
+        if (emailInputRow) emailInputRow.hidden = true;
+    } else {
+        if (emailRow) emailRow.hidden = true;
+        if (emailInputRow) emailInputRow.hidden = false;
+        if (emailInput) {
+            try { emailInput.value = localStorage.getItem('chefOverflowSubmitEmail') || ''; } catch (_) {}
+        }
+    }
 }
 
 function applySignedOutUI() {
@@ -2479,15 +2513,11 @@ let _runToken = null; // { run_id, token } issued by start-run
 
 async function startRun() {
     _runToken = null;
-    if (!_fnBase) return;
     try {
         const res = await fetch(`${_fnBase}/start-run`, {
             method: 'POST',
-            headers: {
-                'content-type': 'application/json',
-                'apikey': SUPABASE_ANON_KEY,
-                'authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            },
+            headers: { 'content-type': 'application/json' },
+            body: '{}',
         });
         if (!res.ok) {
             setLeaderboardOffline(true);
@@ -2625,13 +2655,27 @@ async function _submitVerifiedScoreImpl() {
         statusEl.textContent = 'Run rejected: score integrity check failed.';
         return;
     }
-    if (!_ht6User?.email) {
+    if (!_ht6User) {
         statusEl.textContent = 'Sign in with Hack the 6ix to submit.';
         return;
     }
-    const email = _ht6User.email.trim();
+
+    // Prefer the email HT6 returned. If absent, fall back to the typed input.
+    // The server treats HT6-supplied emails as trusted and client-typed ones as
+    // best-effort; either way the HT6 session must be live or submit-score rejects.
+    let email = (_ht6User.email || '').trim();
+    if (!email) {
+        const input = document.getElementById('auth-email-input');
+        email = input ? input.value.trim() : '';
+        if (!EMAIL_RE.test(email)) {
+            statusEl.textContent = 'Enter the email you want listed on the leaderboard.';
+            if (input) input.focus();
+            return;
+        }
+        try { localStorage.setItem('chefOverflowSubmitEmail', email); } catch (_) {}
+    }
     if (!EMAIL_RE.test(email)) {
-        statusEl.textContent = 'Authenticated email is invalid — contact HT6 organizers.';
+        statusEl.textContent = 'Email is invalid.';
         return;
     }
 
@@ -2650,13 +2694,8 @@ async function _submitVerifiedScoreImpl() {
     local.sort((a, b) => b.score - a.score);
     saveLeaderboard(local);
 
-    if (!_fnBase) {
-        statusEl.textContent = 'Saved locally (Supabase not configured).';
-        await renderLeaderboard();
-        return;
-    }
     if (!_runToken) {
-        statusEl.textContent = 'No run token — refresh and play a fresh game before submitting.';
+        statusEl.textContent = 'No run token. Refresh and play a fresh game before submitting.';
         await renderLeaderboard();
         return;
     }
@@ -2665,11 +2704,8 @@ async function _submitVerifiedScoreImpl() {
     try {
         const res = await fetch(`${_fnBase}/submit-score`, {
             method: 'POST',
-            headers: {
-                'content-type': 'application/json',
-                'apikey': SUPABASE_ANON_KEY,
-                'authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            },
+            credentials: 'include', // so the HT6 cookie is forwarded to our /api endpoint
+            headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
                 run_id: _runToken.run_id,
                 token: _runToken.token,
@@ -2680,14 +2716,16 @@ async function _submitVerifiedScoreImpl() {
         if (!res.ok) {
             const reason = data?.error || `http_${res.status}`;
             const msg = ({
+                ht6_unauthenticated: 'HT6 session expired. Sign in again.',
+                ht6_unreachable: 'HT6 sign-in service is unreachable. Try again in a moment.',
                 rate_limited: 'Please wait a bit before submitting again.',
                 implausible_score: 'Run rejected: score outside plausible range.',
                 implausible_delivered: 'Run rejected: delivery count not plausible.',
                 implausible_streak: 'Run rejected: streak not plausible.',
                 token_used: 'This run has already been submitted.',
-                token_expired: 'Run expired — start a new game to submit.',
+                token_expired: 'Run expired. Start a new game to submit.',
                 too_fast: 'Run too short to submit.',
-                unknown_token: 'Run not recognized — start a new game.',
+                unknown_token: 'Run not recognized. Start a new game.',
                 bad_signature: 'Run token invalid.',
                 bad_email: 'Please enter a valid email address.',
             })[reason] || 'Submission rejected.';
@@ -3350,6 +3388,59 @@ renderSideLeaderboard();
 setInterval(renderSideLeaderboard, 30_000);
 restorePendingRunIfAny();
 initHt6Auth();
+initAboutModal();
+
+// =============================================
+// ABOUT / WELCOME MODAL
+// =============================================
+const ABOUT_SEEN_KEY = 'chefOverflowAboutSeenV1';
+
+function showAboutModal() {
+    const modal = document.getElementById('about-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    // Move focus to the primary action for keyboard users.
+    const closeBtn = document.getElementById('about-close-btn');
+    if (closeBtn) closeBtn.focus();
+}
+
+function hideAboutModal() {
+    const modal = document.getElementById('about-modal');
+    if (!modal) return;
+    modal.classList.add('hidden');
+    try { localStorage.setItem(ABOUT_SEEN_KEY, '1'); } catch (_) {}
+}
+
+function initAboutModal() {
+    const modal = document.getElementById('about-modal');
+    if (!modal) return;
+
+    const openBtn = document.getElementById('about-open-btn');
+    const closeBtn = document.getElementById('about-close-btn');
+
+    if (openBtn) openBtn.addEventListener('click', showAboutModal);
+    if (closeBtn) closeBtn.addEventListener('click', hideAboutModal);
+
+    // Click the backdrop to dismiss.
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) hideAboutModal();
+    });
+
+    // Esc to dismiss.
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
+            hideAboutModal();
+        }
+    });
+
+    // Auto-show on first visit. Suppress if the game-over screen is up
+    // (e.g. user came back from an HT6 sign-in redirect).
+    let seen = false;
+    try { seen = !!localStorage.getItem(ABOUT_SEEN_KEY); } catch (_) {}
+    const gameOver = document.getElementById('game-over');
+    const gameOverVisible = gameOver && !gameOver.classList.contains('hidden');
+    if (!seen && !gameOverVisible) showAboutModal();
+}
 
 console.log(`
 Chef Overflow v2.0
