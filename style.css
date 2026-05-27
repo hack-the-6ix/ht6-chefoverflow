@@ -141,12 +141,27 @@ body.game-page .site-header .docs-link-bar {
     z-index: 3;
 }
 
-.docs-link-bar a {
+.docs-link-bar a,
+.docs-link-bar .docs-link-btn {
     color: var(--ht6-teal-light);
 }
 
-.docs-link-bar a:hover {
+.docs-link-bar a:hover,
+.docs-link-bar .docs-link-btn:hover {
     text-decoration: underline;
+}
+
+.docs-link-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+}
+
+.docs-link-sep {
+    margin: 0 6px;
+    opacity: 0.5;
 }
 
 .site-header {
@@ -1478,6 +1493,140 @@ body.game-running #start-btn {
     display: none;
 }
 
+/* About / welcome modal */
+.about-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.78);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 110;
+    padding: 24px;
+    animation: about-fade-in 0.18s ease;
+}
+
+.about-modal.hidden {
+    display: none;
+}
+
+@keyframes about-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.about-modal-card {
+    max-width: 440px;
+    width: 100%;
+    padding: 26px 26px 22px;
+    border-radius: var(--radius-2xl);
+    background: linear-gradient(165deg, var(--bg-elevated) 0%, var(--bg-surface) 100%);
+    border: 1px solid var(--border-default);
+    box-shadow:
+        0 0 40px rgba(68, 217, 184, 0.10),
+        0 24px 48px rgba(0, 0, 0, 0.5);
+    animation: about-card-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes about-card-in {
+    from { transform: translateY(8px) scale(0.98); opacity: 0; }
+    to   { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.about-modal-head {
+    margin-bottom: 14px;
+    text-align: center;
+}
+
+.about-modal-eyebrow {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.about-modal-card h2 {
+    margin: 0;
+    font-size: var(--text-h3);
+    color: var(--text-highlight);
+    letter-spacing: 0.02em;
+}
+
+.about-modal-body {
+    color: var(--text-primary);
+    font-size: var(--text-small);
+    line-height: 1.6;
+    margin-bottom: 18px;
+}
+
+.about-modal-body p {
+    margin: 0 0 10px;
+}
+.about-modal-body p:last-child {
+    margin-bottom: 0;
+}
+
+.about-modal-hint {
+    margin-top: 14px !important;
+    padding: 10px 12px;
+    background: rgba(8, 4, 28, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-md);
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+}
+
+.about-modal-hint kbd {
+    display: inline-block;
+    padding: 1px 6px;
+    margin: 0 1px;
+    background: rgba(96, 64, 184, 0.3);
+    border: 1px solid rgba(96, 64, 184, 0.5);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    color: var(--text-primary);
+}
+
+.about-modal-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.about-modal-secondary {
+    color: var(--ht6-teal-light);
+    font-size: var(--text-small);
+    text-decoration: none;
+}
+.about-modal-secondary:hover {
+    text-decoration: underline;
+}
+
+.about-modal-primary {
+    padding: 9px 22px;
+    border-radius: var(--radius-pill, 999px);
+    border: none;
+    background: linear-gradient(135deg, var(--ht6-gold, #f5cf6b) 0%, #f0bb40 100%);
+    color: var(--ht6-navy, #0a0426);
+    font-weight: var(--font-weight-heading, 700);
+    font-size: var(--text-small);
+    cursor: pointer;
+    transition: transform 0.1s ease, box-shadow 0.15s ease;
+}
+.about-modal-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(245, 207, 107, 0.3);
+}
+.about-modal-primary:active {
+    transform: translateY(0);
+}
+
 .game-over-modal {
     max-width: 420px;
     width: 100%;
@@ -1694,6 +1843,33 @@ body.game-running #start-btn {
     color: var(--text-primary);
     font-family: var(--font-mono);
     word-break: break-all;
+}
+
+.auth-email-input-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 10px;
+    background: rgba(8, 4, 28, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-md);
+}
+
+.auth-email-input {
+    width: 100%;
+    padding: 8px 10px;
+    background: rgba(8, 4, 28, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-sm, 6px);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--text-small);
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+.auth-email-input:focus {
+    border-color: var(--ht6-gold, #f5cf6b);
 }
 
 .btn-ht6-signin {
