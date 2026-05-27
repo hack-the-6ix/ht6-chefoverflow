@@ -2620,7 +2620,7 @@ async function fetchTopScores() {
     try {
         const { data, error } = await _db
             .from('leaderboard_public')
-            .select('masked_email, score, grade, streak, delivered')
+            .select('display_name, score, grade, streak, delivered')
             .order('score', { ascending: false })
             .limit(10);
         return error ? null : data;
@@ -2640,10 +2640,7 @@ function lbRowHTML(entry, i, maxScore = 0) {
     const rankClass = i < 3 ? ` lb-rank-${i + 1}` : '';
     const fill = maxScore > 0 ? Math.max(4, Math.min(100, (score / maxScore) * 100)) : 0;
     const rankLabel = i < 3 ? LB_RANK_LABELS[i] : `#${i + 1}`;
-    // masked_email comes from the leaderboard_public view; legacy entries
-    // (local fallback) may carry handle/email. Sanitize every path since
-    // this is the one place the leaderboard reaches innerHTML.
-    const rawWho = (entry && (entry.masked_email || entry.handle || entry.email)) || '';
+    const rawWho = (entry && (entry.display_name || entry.handle || entry.email)) || '';
     const who = rawWho ? `<span class="lb-who">${_escapeHTML(rawWho)}</span>` : '';
     return `<div class="lb-score-row${rankClass}" style="--lb-fill:${fill.toFixed(1)}%">` +
         `<span class="lb-rank-fill" aria-hidden="true"></span>` +
@@ -2671,7 +2668,7 @@ async function fetchGlobalLeaderboard() {
     try {
         const { data, error } = await _db
             .from('leaderboard_public')
-            .select('masked_email, score, grade, streak, delivered')
+            .select('display_name, score, grade, streak, delivered')
             .order('score', { ascending: false })
             .limit(10);
         return error ? null : data;

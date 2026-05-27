@@ -97,12 +97,11 @@ export default async function handler(req, res) {
     if (!isInt(time_secs, MIN_RUN_SECONDS, MAX_RUN_SECONDS))
         return rejectAndLog(res, 400, 'bad_time', { time_secs });
 
-    // Trusted email > client-typed.
-    const rawEmail = (auth.user && auth.user.email) || clientEmail;
-    if (typeof rawEmail !== 'string' || rawEmail.length > 254 || !EMAIL_RE.test(rawEmail)) {
-        return rejectAndLog(res, 400, 'bad_email', { has_trusted: !!auth.user?.email });
+    // Email must come from HT6's user profile — client-typed email is ignored.
+    if (!auth.user?.email) {
+        return rejectAndLog(res, 503, 'ht6_profile_unavailable');
     }
-    const email = rawEmail.toLowerCase();
+    const email = auth.user.email.toLowerCase();
 
     // 3) Plausibility. In 'log' mode we record violations but accept the
     //    submission, so we can tune caps from real telemetry.
@@ -152,15 +151,18 @@ export default async function handler(req, res) {
     // 5) Atomic claim + best-only upsert. The RPC re-fetches the token row
     //    under FOR UPDATE so we cannot lose a race against a concurrent submit.
     const rpc = await supabase.rpc('submit_run', {
-        p_run_id: run_id,
-        p_email: email,
-        p_score: score,
-        p_grade: grade,
-        p_streak: streak,
-        p_delivered: delivered,
-        p_time_secs: time_secs,
-        p_min_age_ms: TOKEN_MIN_AGE_MS,
-        p_max_age_ms: TOKEN_MAX_AGE_MS,
+        p_run_id:       run_id,
+        p_email:        email,
+        p_score:        score,
+        p_grade:        grade,
+        p_streak:       streak,
+        p_delivered:    delivered,
+        p_time_secs:    time_secs,
+        p_ht6_user_id:  auth.user.userId    || null,
+        p_first_name:   auth.user.firstName || null,
+        p_last_name:    auth.user.lastName  || null,
+        p_min_age_ms:   TOKEN_MIN_AGE_MS,
+        p_max_age_ms:   TOKEN_MAX_AGE_MS,
         p_rate_limit_ms: RATE_LIMIT_MS,
     });
 

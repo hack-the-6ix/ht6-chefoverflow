@@ -77,52 +77,88 @@ export function timingSafeEqual(a, b) {
 }
 
 const AUTH_CHECK_TIMEOUT_MS = 3000;
+const HT6_SEASON_CODE = process.env.HT6_SEASON_CODE || 'S26';
 
 /**
- * Forward the inbound request's Cookie header to HT6 /api/auth/check.
- * Returns { ok: boolean, status, user? }. The user object is parsed from the
- * response body when the live server happens to include one (the public spec
- * doesn't promise a body, so we parse defensively).
+ * Verify the HT6 session and resolve the authenticated user's profile.
  *
- * Bounded by AUTH_CHECK_TIMEOUT_MS so a slow/degraded HT6 can't hang the
- * Vercel function until its 10s default timeout.
+ * Two-hop strategy (HT6's /auth/check returns no body):
+ *   1. /api/auth/check + /api/seasons/{code}/responses run in parallel.
+ *      The responses endpoint scopes results to the current user, giving us
+ *      their userId without a separate /me endpoint.
+ *   2. /api/users/{userId} fetches the trusted email and display name.
+ *
+ * Returns { ok: boolean, status, user? } where user has { email, userId,
+ * firstName, lastName } drawn entirely from HT6's database — never from the
+ * client request body.
  */
 export async function verifyHt6Session(req) {
     const cookie = req.headers['cookie'];
     if (!cookie) return { ok: false, status: 401 };
 
-    let res;
+    const ht6Headers = {
+        cookie,
+        accept: 'application/json',
+        'user-agent': 'chef-overflow-server/1.0',
+    };
+
+    // Step 1: auth liveness check + userId lookup in parallel.
+    let authOk = false;
+    let userId = null;
     try {
-        res = await fetch(`${HT6_API_URL}/api/auth/check`, {
-            method: 'GET',
-            headers: {
-                cookie,
-                accept: 'application/json',
-                'user-agent': 'chef-overflow-server/1.0',
-            },
-            signal: AbortSignal.timeout(AUTH_CHECK_TIMEOUT_MS),
-        });
+        const [authRes, respRes] = await Promise.all([
+            fetch(`${HT6_API_URL}/api/auth/check`, {
+                method: 'GET',
+                headers: ht6Headers,
+                signal: AbortSignal.timeout(AUTH_CHECK_TIMEOUT_MS),
+            }),
+            fetch(`${HT6_API_URL}/api/seasons/${HT6_SEASON_CODE}/responses`, {
+                method: 'GET',
+                headers: ht6Headers,
+                signal: AbortSignal.timeout(AUTH_CHECK_TIMEOUT_MS),
+            }),
+        ]);
+
+        authOk = authRes.ok;
+
+        if (respRes.ok) {
+            try {
+                const body = await respRes.json();
+                userId = body?.data?.[0]?.userId ?? null;
+            } catch (_) {}
+        }
     } catch (err) {
-        // AbortError on timeout, TypeError on DNS / network. Treat both as
-        // "upstream unavailable" rather than "user is unauthenticated".
-        const status = err && err.name === 'TimeoutError' ? 504 : 502;
+        const status = err?.name === 'TimeoutError' ? 504 : 502;
         return { ok: false, status };
     }
 
-    if (!res.ok) return { ok: false, status: res.status };
+    if (!authOk) return { ok: false, status: 401 };
+    if (!userId) return { ok: false, status: 403 }; // authed but no S26 form response
 
-    let user = null;
+    // Step 2: fetch the full user profile for trusted email + display name.
     try {
-        const text = await res.text();
-        if (text) {
-            const data = JSON.parse(text);
-            const payload = data?.data ?? data;
-            const candidate = payload?.user || payload;
-            if (candidate && typeof candidate.email === 'string') user = candidate;
-        }
-    } catch (_) {
-        // Body wasn't JSON or was empty. Auth still valid, no profile data.
-    }
+        const profileRes = await fetch(`${HT6_API_URL}/api/users/${userId}`, {
+            method: 'GET',
+            headers: ht6Headers,
+            signal: AbortSignal.timeout(AUTH_CHECK_TIMEOUT_MS),
+        });
+        if (!profileRes.ok) return { ok: false, status: 502 };
 
-    return { ok: true, status: 200, user };
+        const data = await profileRes.json();
+        if (!data || typeof data.email !== 'string') return { ok: false, status: 502 };
+
+        return {
+            ok: true,
+            status: 200,
+            user: {
+                email:     data.email,
+                userId:    data.userId,
+                firstName: data.firstName ?? null,
+                lastName:  data.lastName  ?? null,
+            },
+        };
+    } catch (err) {
+        const status = err?.name === 'TimeoutError' ? 504 : 502;
+        return { ok: false, status };
+    }
 }
