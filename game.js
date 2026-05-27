@@ -13,9 +13,6 @@ const MAP_HEIGHT = 14;
 canvas.width = MAP_WIDTH * CELL_SIZE;
 canvas.height = MAP_HEIGHT * CELL_SIZE;
 
-const floorImg = new Image();
-floorImg.src = 'assets/floor.png';
-
 // =============================================
 // GAME STATE
 // =============================================
@@ -298,7 +295,6 @@ const SKIN_SOURCES = {
         platingArea: 'assets/skins/stations/plating-area.png',
         trash: 'assets/skins/stations/trash.png',
         receptionStand: 'assets/skins/stations/reception-stand.png',
-        counter: 'assets/skins/stations/counter.png',
         ingredientBin: 'assets/skins/stations/ingredient-bin.png'
     },
     order: {
@@ -1767,12 +1763,8 @@ function updateOrders(dt) {
 function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    if (floorImg.complete && floorImg.naturalWidth > 0) {
-        ctx.drawImage(floorImg, 0, 0);
-    } else {
-        if (!floorTextureCanvas) buildFloorTexture();
-        ctx.drawImage(floorTextureCanvas, 0, 0);
-    }
+    if (!floorTextureCanvas) buildFloorTexture();
+    ctx.drawImage(floorTextureCanvas, 0, 0);
     for (let y = 0; y < MAP_HEIGHT; y++) {
         for (let x = 0; x < MAP_WIDTH; x++) {
             if (map[y][x] !== TILE_TYPES.FLOOR) {
