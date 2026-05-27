@@ -122,13 +122,23 @@
         </div>
 
         <div id="orders-panel">
-            <h3>Orders</h3>
-            <div id="orders-stats" class="orders-stats-row" aria-live="polite">
-                <span class="stat-pill stat-delivered">Delivered <span id="stat-delivered">0</span></span>
-                <span class="stat-pill stat-failed">Failed <span id="stat-failed">0</span></span>
-                <span class="stat-pill stat-active">Active <span id="stat-active">0</span></span>
+            <h4 class="ui-eyebrow">Orders</h4>
+            <div id="orders-stats" class="orders-counters" aria-live="polite">
+                <div class="orders-counter orders-counter-delivered">
+                    <span class="ui-label">Delivered</span>
+                    <span class="orders-counter-value" id="stat-delivered">0</span>
+                </div>
+                <div class="orders-counter orders-counter-failed">
+                    <span class="ui-label">Failed</span>
+                    <span class="orders-counter-value" id="stat-failed">0</span>
+                </div>
+                <div class="orders-counter">
+                    <span class="ui-label">Active</span>
+                    <span class="orders-counter-value" id="stat-active">0</span>
+                </div>
             </div>
-            <div id="orders-list"></div>
+            <h4 class="ui-eyebrow">Queue</h4>
+            <div id="orders-list" class="orders-list"></div>
         </div>
     </div>
 

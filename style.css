@@ -696,38 +696,8 @@ body.game-running #start-btn {
     line-height: 1.4;
 }
 
-.orders-stats-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 14px;
-}
-
-.stat-pill {
-    font-size: var(--text-tiny);
-    font-weight: var(--font-weight-heading);
-    padding: 6px 10px;
-    border-radius: var(--radius-pill);
-    letter-spacing: 0.02em;
-}
-
-.stat-delivered {
-    background: rgba(68, 217, 184, 0.16);
-    color: var(--ht6-teal-light);
-    border: 1px solid rgba(68, 217, 184, 0.42);
-}
-
-.stat-failed {
-    background: rgba(224, 96, 80, 0.16);
-    color: color-mix(in srgb, var(--ht6-coral) 55%, #ffffff);
-    border: 1px solid rgba(224, 96, 80, 0.45);
-}
-
-.stat-active {
-    background: rgba(92, 143, 230, 0.16);
-    color: color-mix(in srgb, var(--info) 55%, #ffffff);
-    border: 1px solid rgba(92, 143, 230, 0.42);
-}
+/* (Legacy `.orders-stats-row` / `.stat-pill` styles removed: the right
+   rail now uses .orders-counters which mirrors the left-rail hero.) */
 
 .orders-empty {
     color: var(--text-muted);
@@ -1131,6 +1101,7 @@ body.game-running #start-btn {
     color: color-mix(in srgb, var(--ht6-amber) 60%, #ffffff);
 }
 
+/* Right rail (Orders) mirrors the left rail (#ui-panel) chrome exactly. */
 #orders-panel {
     background: var(--chrome-panel);
     backdrop-filter: blur(10px);
@@ -1139,238 +1110,216 @@ body.game-running #start-btn {
     border-radius: var(--radius-2xl);
     border: 1px solid var(--chrome-border);
     min-width: 220px;
-    max-width: 320px;
+    max-width: 280px;
     max-height: 680px;
     overflow-y: auto;
     flex-shrink: 1;
     box-shadow: 0 2px 16px rgba(0, 0, 0, 0.28);
-    scrollbar-width: thin;
-    scrollbar-color: rgba(68, 217, 184, 0.35) rgba(0,0,0,0.25);
-}
-
-#orders-panel::-webkit-scrollbar {
-    width: 8px;
-}
-
-#orders-panel::-webkit-scrollbar-track {
-    background: rgba(0,0,0,0.2);
-    border-radius: var(--radius-xs);
-}
-
-#orders-panel::-webkit-scrollbar-thumb {
-    background: rgba(68, 217, 184, 0.35);
-    border-radius: var(--radius-xs);
-}
-
-#orders-panel::-webkit-scrollbar-thumb:hover {
-    background: rgba(68, 217, 184, 0.5);
-}
-
-#orders-panel h3 {
-    font-family: var(--font-heading);
-    font-weight: var(--font-weight-extra);
-    margin-bottom: 20px;
-    color: var(--text-highlight);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-    padding-bottom: 10px;
-    font-size: var(--text-small);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-}
-
-#orders-list {
     display: flex;
     flex-direction: column;
+    gap: 16px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(107, 91, 149, 0.35) rgba(0, 0, 0, 0.2);
+}
+
+#orders-panel::-webkit-scrollbar { width: 8px; }
+#orders-panel::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: var(--radius-xs);
+}
+#orders-panel::-webkit-scrollbar-thumb {
+    background: rgba(107, 91, 149, 0.35);
+    border-radius: var(--radius-xs);
+}
+#orders-panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(107, 91, 149, 0.55);
+}
+
+/* Counter row: mirrors the SCORE / TIME / PHASE hero. Three labels above
+   white numbers, no pill borders. Delivered tinted teal, Failed coral. */
+.orders-counters {
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xl);
+    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
     gap: 14px;
 }
 
-.order-card {
-    background: var(--card-elevated);
-    padding: var(--space-default);
-    margin-bottom: 0;
-    border-radius: var(--radius-xl);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-left: 3px solid var(--ht6-teal);
-    transition: box-shadow 0.3s ease, border-color 0.3s ease;
-}
-
-.order-card.vip {
-    border-left-color: var(--ht6-gold);
-    border-color: rgba(232, 184, 75, 0.35);
-    box-shadow: 0 0 0 1px rgba(232, 184, 75, 0.25), var(--glow-gold);
-}
-
-.order-card.urgent {
-    border-left-color: var(--danger);
-    animation: orderUrgentPulse 0.55s ease-in-out infinite alternate;
-    background: linear-gradient(135deg, var(--bg-elevated) 0%, var(--bg-card) 100%);
-}
-
-@keyframes orderUrgentPulse {
-    from { box-shadow: 0 0 0 0 rgba(224, 96, 80, 0.35); }
-    to { box-shadow: 0 0 14px 2px rgba(224, 96, 80, 0.45); }
-}
-
-@keyframes orderEnter {
-    from {
-        opacity: 0;
-        transform: translateX(14px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(0);
-    }
-}
-
-.order-card-enter {
-    animation: orderEnter 0.42s ease forwards;
-}
-
-.order-card-top {
+.orders-counter {
     display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 10px;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
 }
 
-.order-title-wrap {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
-    font-weight: var(--font-weight-extra);
+.orders-counter-value {
     font-family: var(--font-heading);
-    font-size: var(--text-body);
-    color: var(--text-primary);
-}
-
-.order-name {
+    font-weight: var(--font-weight-extra);
+    font-size: 22px;
+    line-height: 1.1;
     color: var(--text-highlight);
-    font-weight: var(--font-weight-heading);
+    font-variant-numeric: tabular-nums;
 }
 
-.order-emoji {
-    font-size: var(--text-tiny);
-    font-family: var(--font-mono);
-    padding: 2px 6px;
-    border-radius: var(--radius-pill);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    background: rgba(255, 255, 255, 0.08);
+.orders-counter-delivered .orders-counter-value { color: var(--ht6-teal-light); }
+.orders-counter-failed .orders-counter-value    { color: var(--ht6-coral); }
+
+/* Orders list: flat rows separated by 1px muted purple dividers.
+   No nested card backgrounds. */
+.orders-list {
+    display: flex;
+    flex-direction: column;
 }
 
-.order-emoji.order-emoji-img {
-    padding: 0;
-    border: none;
-    background: none;
-    display: inline-flex;
+.order-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 32px 1fr auto;
     align-items: center;
+    column-gap: 10px;
+    padding: 10px 2px 12px;
+    min-height: 56px;
 }
 
-.order-emoji.order-emoji-img img {
+.order-row + .order-row {
+    border-top: 1px solid rgba(107, 91, 149, 0.2);
+}
+
+.order-row-icon {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+.order-row-icon img {
     width: 32px;
     height: 32px;
     object-fit: contain;
     image-rendering: pixelated;
 }
 
-.vip-star {
-    color: var(--ht6-gold);
-    font-size: var(--text-small);
-}
-
-.order-stand {
-    font-size: var(--text-xs);
-    font-weight: var(--font-weight-heading);
-    padding: 5px 10px;
-    border-radius: var(--radius-pill);
-    background: rgba(92, 61, 143, 0.35);
-    color: var(--ht6-silver);
-    border: 1px solid rgba(92, 61, 143, 0.55);
-    white-space: nowrap;
-    flex-shrink: 0;
-}
-
-.order-chips {
+.order-row-body {
+    min-width: 0;
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: 6px;
-    margin: 10px 0 6px;
 }
 
-.order-chip {
-    font-size: var(--text-tiny);
-    font-weight: var(--font-weight-medium);
-    padding: 4px 9px;
-    border-radius: var(--radius-pill);
-    border: 1px solid;
-    display: inline-flex;
+.order-row-title {
+    display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
+    min-width: 0;
 }
 
-.order-chip-img {
+.order-row-name {
+    font-size: 15px;
+    font-weight: var(--font-weight-extra);
+    color: var(--text-highlight);
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.order-row-stand {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: var(--font-weight-heading);
+    color: var(--text-muted);
+    background: rgba(107, 91, 149, 0.22);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-variant-numeric: tabular-nums;
+}
+
+.order-row-vip {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: var(--font-weight-extra);
+    color: var(--ht6-gold);
+    letter-spacing: 0.08em;
+}
+
+.order-row-ings {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.order-row-ing {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.order-row-ing img {
     width: 20px;
     height: 20px;
     object-fit: contain;
     image-rendering: pixelated;
 }
+/* Subtle visual cue for required state without text or pills. Raw stays
+   plain, processed states get a tiny matching underline. */
+.order-row-ing[data-state="chopped"] { box-shadow: inset 0 -2px 0 var(--ht6-gold); }
+.order-row-ing[data-state="cooked"]  { box-shadow: inset 0 -2px 0 var(--ht6-amber, #D4944C); }
+.order-row-ing[data-state="burnt"]   { box-shadow: inset 0 -2px 0 var(--ht6-coral); opacity: 0.6; }
 
-.order-chip.chip-raw {
-    border-color: var(--ht6-silver);
-    color: var(--text-secondary);
-    background: rgba(184, 196, 208, 0.1);
-}
-
-.order-chip.chip-processed {
-    border-color: rgba(255, 255, 255, 0.22);
-    color: var(--text-primary);
-    background: rgba(255, 255, 255, 0.06);
-}
-
-.order-time-large {
-    font-size: var(--text-h3);
-    font-weight: var(--font-weight-extra);
-    font-family: var(--font-heading);
-    color: var(--text-highlight);
-    margin: 6px 0 8px;
-    letter-spacing: -0.02em;
-}
-
-.order-dish {
-    font-family: var(--font-heading);
+.order-row-timer {
+    align-self: start;
+    font-size: 14px;
     font-weight: var(--font-weight-heading);
-    font-size: var(--text-body);
-    margin-bottom: 6px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+    padding-top: 2px;
 }
 
-.order-components {
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-    margin-bottom: 4px;
-}
+.order-row[data-urgency="healthy"] .order-row-timer { color: var(--ht6-teal); }
+.order-row[data-urgency="warn"]    .order-row-timer { color: var(--ht6-gold); }
+.order-row[data-urgency="danger"]  .order-row-timer { color: var(--ht6-coral); }
 
-.order-time {
-    font-size: var(--text-xs);
-    color: var(--text-muted);
+/* 2px progress bar sits along the bottom edge of the row, full width. */
+.order-row-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    background: transparent;
+    pointer-events: none;
 }
-
-.order-timer {
-    background: rgba(0, 0, 0, 0.55);
-    border-radius: var(--radius-xs);
-    height: 10px;
-    margin-top: 4px;
-    overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.order-timer-fill {
+.order-row-bar::before {
+    content: '';
+    display: block;
     height: 100%;
-    transition: width 0.1s linear, background 0.25s ease;
-    border-radius: var(--radius-xs);
+    width: var(--fill, 0%);
+    transition: width 0.15s linear;
+}
+.order-row[data-urgency="healthy"] .order-row-bar::before { background: var(--ht6-teal); }
+.order-row[data-urgency="warn"]    .order-row-bar::before { background: var(--ht6-gold); }
+.order-row[data-urgency="danger"]  .order-row-bar::before { background: var(--ht6-coral); }
+
+@keyframes orderRowDangerPulse {
+    from { opacity: 1; }
+    to   { opacity: 0.6; }
+}
+.order-row[data-urgency="danger"] .order-row-timer,
+.order-row[data-urgency="danger"] .order-row-bar::before {
+    animation: orderRowDangerPulse 1s ease-in-out infinite alternate;
 }
 
-.order-timer-fill.urgent {
-    box-shadow: 0 0 10px rgba(224, 96, 80, 0.4);
+/* VIP gets a small gold glow on the icon, nothing else. */
+.order-row.is-vip .order-row-icon {
+    filter: drop-shadow(0 0 6px rgba(232, 184, 75, 0.55));
 }
 
 #recipes-panel {

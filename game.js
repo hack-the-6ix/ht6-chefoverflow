@@ -2954,98 +2954,94 @@ function updateUI() {
     }
 
     for (const order of orders) {
-        const card = document.createElement('div');
-        const urgency = order.timeLeft / order.maxTime;
-        const urgent = order.timeLeft < order.maxTime * 0.25;
-        card.className = 'order-card' + (urgent ? ' urgent' : '') + (order.vip ? ' vip' : '');
+        const urgencyPct = Math.max(0, Math.min(1, order.timeLeft / order.maxTime));
+        let bucket = 'danger';
+        if (urgencyPct > 0.5) bucket = 'healthy';
+        else if (urgencyPct > 0.2) bucket = 'warn';
 
-        const top = document.createElement('div');
-        top.className = 'order-card-top';
-        const titleWrap = document.createElement('div');
-        titleWrap.className = 'order-title-wrap';
-        const emojiSpan = document.createElement('span');
-        emojiSpan.className = 'order-emoji';
+        const row = document.createElement('div');
+        row.className = 'order-row' + (order.vip ? ' is-vip' : '');
+        row.dataset.urgency = bucket;
+
+        // 32px dish icon, left.
+        const icon = document.createElement('div');
+        icon.className = 'order-row-icon';
         const orderSkinPath = SKIN_SOURCES.order[order.dish];
         if (orderSkinPath) {
-            emojiSpan.classList.add('order-emoji-img');
             const img = document.createElement('img');
             img.src = orderSkinPath;
             img.alt = order.dish;
             img.onerror = () => {
-                emojiSpan.classList.remove('order-emoji-img');
-                emojiSpan.textContent = order.icon || RECIPE_ICON_BY_NAME[order.dish] || 'ORD';
+                img.remove();
+                icon.textContent = order.icon || RECIPE_ICON_BY_NAME[order.dish] || '?';
             };
-            emojiSpan.appendChild(img);
+            icon.appendChild(img);
         } else {
-            emojiSpan.textContent = order.icon || RECIPE_ICON_BY_NAME[order.dish] || 'ORD';
+            icon.textContent = order.icon || RECIPE_ICON_BY_NAME[order.dish] || '?';
         }
-        const nameSpan = document.createElement('span');
-        nameSpan.className = 'order-name';
-        nameSpan.textContent = order.dish + (order.vip ? ' ' : '');
-        titleWrap.appendChild(emojiSpan);
-        titleWrap.appendChild(nameSpan);
+        row.appendChild(icon);
+
+        // Body: name + stand chip on row 1, ingredient icons on row 2.
+        const body = document.createElement('div');
+        body.className = 'order-row-body';
+
+        const titleRow = document.createElement('div');
+        titleRow.className = 'order-row-title';
+        const nameEl = document.createElement('span');
+        nameEl.className = 'order-row-name';
+        nameEl.textContent = order.dish;
+        titleRow.appendChild(nameEl);
         if (order.vip) {
             const vip = document.createElement('span');
-            vip.className = 'vip-star';
+            vip.className = 'order-row-vip';
             vip.textContent = 'VIP';
-            titleWrap.appendChild(vip);
+            titleRow.appendChild(vip);
         }
-        const standBadge = document.createElement('span');
-        standBadge.className = 'order-stand';
-        standBadge.textContent = 'Stand ' + standNumberFromStandId(order.standId);
-        top.appendChild(titleWrap);
-        top.appendChild(standBadge);
-        card.appendChild(top);
+        const stand = document.createElement('span');
+        stand.className = 'order-row-stand';
+        stand.textContent = 'S' + standNumberFromStandId(order.standId);
+        titleRow.appendChild(stand);
+        body.appendChild(titleRow);
 
-        const chips = document.createElement('div');
-        chips.className = 'order-chips';
+        const ings = document.createElement('div');
+        ings.className = 'order-row-ings';
         for (const c of order.recipe.components) {
-            const chip = document.createElement('span');
-            const processed = c.state === 'chopped' || c.state === 'cooked' || c.state === 'burnt';
-            chip.className = 'order-chip' + (processed ? ' chip-processed' : ' chip-raw');
+            const ingEl = document.createElement('div');
+            ingEl.className = 'order-row-ing';
+            ingEl.dataset.state = c.state;
+            ingEl.title = `${c.ingredient} · ${c.state}`;
             const ingSkinPath = SKIN_SOURCES.ingredient[c.ingredient];
-            const stateLabel = document.createElement('span');
-            stateLabel.textContent = c.state;
             if (ingSkinPath) {
-                const ingImg = document.createElement('img');
-                ingImg.className = 'order-chip-img';
-                ingImg.src = ingSkinPath;
-                ingImg.alt = c.ingredient;
-                ingImg.onerror = () => {
-                    ingImg.remove();
-                    const em = INGREDIENT_ICONS[c.ingredient] || '•';
-                    stateLabel.textContent = `${em} ${c.state}`;
+                const img = document.createElement('img');
+                img.src = ingSkinPath;
+                img.alt = c.ingredient;
+                img.onerror = () => {
+                    img.remove();
+                    ingEl.textContent = INGREDIENT_ICONS[c.ingredient] || '•';
                 };
-                chip.appendChild(ingImg);
+                ingEl.appendChild(img);
             } else {
-                const em = INGREDIENT_ICONS[c.ingredient] || '•';
-                stateLabel.textContent = `${em} ${c.state}`;
+                ingEl.textContent = INGREDIENT_ICONS[c.ingredient] || '•';
             }
-            chip.appendChild(stateLabel);
-            chips.appendChild(chip);
+            ings.appendChild(ingEl);
         }
-        card.appendChild(chips);
+        body.appendChild(ings);
 
-        const timeRow = document.createElement('div');
-        timeRow.className = 'order-time-large';
-        timeRow.textContent = `${Math.ceil(order.timeLeft)}s left`;
-        card.appendChild(timeRow);
+        row.appendChild(body);
 
+        // Timer, top-right.
         const timer = document.createElement('div');
-        timer.className = 'order-timer';
-        const fill = document.createElement('div');
-        fill.className = 'order-timer-fill' + (urgent ? ' urgent' : '');
-        fill.style.width = `${urgency * 100}%`;
-        let barGrad;
-        if (urgency > 0.75) barGrad = 'linear-gradient(90deg, #66bb6a, #43a047)';
-        else if (urgency > 0.5) barGrad = 'linear-gradient(90deg, #ffee58, #fbc02d)';
-        else if (urgency > 0.25) barGrad = 'linear-gradient(90deg, #ffb74d, #f57c00)';
-        else barGrad = 'linear-gradient(90deg, #ef5350, #b71c1c)';
-        fill.style.background = barGrad;
-        timer.appendChild(fill);
-        card.appendChild(timer);
+        timer.className = 'order-row-timer';
+        timer.textContent = `${Math.ceil(order.timeLeft)}s`;
+        row.appendChild(timer);
 
-        ordersList.appendChild(card);
+        // 2px progress bar as bottom border of the row.
+        const bar = document.createElement('div');
+        bar.className = 'order-row-bar';
+        bar.style.setProperty('--fill', `${(urgencyPct * 100).toFixed(1)}%`);
+        row.appendChild(bar);
+
+        ordersList.appendChild(row);
     }
 }
 
