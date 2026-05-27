@@ -2620,7 +2620,7 @@ async function fetchTopScores() {
     try {
         const { data, error } = await _db
             .from('leaderboard_public')
-            .select('score')
+            .select('masked_email, score, grade, streak, delivered')
             .order('score', { ascending: false })
             .limit(10);
         return error ? null : data;
