@@ -295,20 +295,16 @@
 
                     <div id="auth-identity-card" class="auth-card auth-card--identity" hidden>
                         <div class="auth-card-head">
-                            <span class="auth-card-eyebrow">Signed in</span>
+                            <span class="auth-card-eyebrow">Signed in with HT6</span>
                             <span class="auth-card-badge">HT6</span>
                         </div>
                         <div class="auth-identity-fields">
-                            <div class="auth-identity-field">
+                            <div id="auth-identity-name-row" class="auth-identity-field" hidden>
                                 <span class="auth-identity-label">Account</span>
-                                <span id="auth-identity-name" class="auth-identity-value">HT6 account</span>
+                                <span id="auth-identity-name" class="auth-identity-value"></span>
                             </div>
-                            <div id="auth-identity-email-row" class="auth-identity-field" hidden>
-                                <span class="auth-identity-label">Email</span>
-                                <span id="auth-identity-email" class="auth-identity-value"></span>
-                            </div>
-                            <div id="auth-email-input-row" class="auth-email-input-row" hidden>
-                                <label for="auth-email-input" class="auth-identity-label">Email for the leaderboard</label>
+                            <div id="auth-email-input-row" class="auth-email-input-row">
+                                <label for="auth-email-input" class="auth-identity-label">Leaderboard email</label>
                                 <input
                                     id="auth-email-input"
                                     class="auth-email-input"
@@ -318,6 +314,7 @@
                                     placeholder="you@example.com"
                                     maxlength="254"
                                 />
+                                <span id="auth-email-input-msg" class="auth-email-input-msg" aria-live="polite">Where to credit your score.</span>
                             </div>
                         </div>
                     </div>

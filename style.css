@@ -1937,6 +1937,9 @@ body.game-running #start-btn {
         linear-gradient(155deg, rgba(61, 42, 144, 0.55) 0%, rgba(30, 16, 88, 0.85) 100%);
     overflow: hidden;
 }
+.auth-card[hidden] {
+    display: none;
+}
 
 .auth-card::before {
     content: '';
@@ -2004,6 +2007,9 @@ body.game-running #start-btn {
     border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: var(--radius-md);
 }
+.auth-identity-field[hidden] {
+    display: none;
+}
 
 .auth-identity-label {
     font-size: 10px;
@@ -2045,6 +2051,25 @@ body.game-running #start-btn {
 }
 .auth-email-input:focus {
     border-color: var(--ht6-gold, #f5cf6b);
+}
+.auth-email-input.is-invalid {
+    border-color: #e26d6d;
+}
+.auth-email-input[readonly] {
+    opacity: 0.85;
+    cursor: default;
+}
+.auth-email-input-msg {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary, rgba(255, 255, 255, 0.55));
+    letter-spacing: 0.02em;
+}
+.auth-email-input-msg.is-error {
+    color: #e26d6d;
+}
+.auth-email-input-msg.is-ok {
+    color: #6dd3a0;
 }
 
 .btn-ht6-signin {
@@ -2113,6 +2138,9 @@ body.game-running #start-btn {
     cursor: not-allowed;
     transform: none;
     box-shadow: none;
+}
+.btn-submit-score[hidden] {
+    display: none;
 }
 
 .btn-submit-arrow {

@@ -2413,11 +2413,10 @@ function applySignedInUI() {
     const signinCard = document.getElementById('auth-signin-card');
     const identityCard = document.getElementById('auth-identity-card');
     const submitBtn = document.getElementById('submit-score-btn');
+    const nameRow = document.getElementById('auth-identity-name-row');
     const nameEl = document.getElementById('auth-identity-name');
-    const emailRow = document.getElementById('auth-identity-email-row');
-    const emailEl = document.getElementById('auth-identity-email');
-    const emailInputRow = document.getElementById('auth-email-input-row');
     const emailInput = document.getElementById('auth-email-input');
+    const emailMsg = document.getElementById('auth-email-input-msg');
 
     if (signinCard) signinCard.hidden = true;
     if (identityCard) identityCard.hidden = false;
@@ -2426,20 +2425,45 @@ function applySignedInUI() {
     const knownName = ht6UserDisplayName(_ht6User);
     const knownEmail = _ht6User && typeof _ht6User.email === 'string' ? _ht6User.email : '';
 
-    if (nameEl) nameEl.textContent = knownName || 'HT6 account';
+    if (nameRow) nameRow.hidden = !knownName;
+    if (nameEl) nameEl.textContent = knownName;
 
-    // Show the email field if HT6 gave us one; otherwise show the input.
-    // The two rows are mutually exclusive so the card never reads as
-    // self-contradictory.
-    if (knownEmail) {
-        if (emailRow) emailRow.hidden = false;
-        if (emailEl) emailEl.textContent = knownEmail;
-        if (emailInputRow) emailInputRow.hidden = true;
-    } else {
-        if (emailRow) emailRow.hidden = true;
-        if (emailInputRow) emailInputRow.hidden = false;
-        if (emailInput) {
-            try { emailInput.value = localStorage.getItem('chefOverflowSubmitEmail') || ''; } catch (_) {}
+    if (emailInput) {
+        if (knownEmail) {
+            emailInput.value = knownEmail;
+            emailInput.readOnly = true;
+        } else {
+            emailInput.readOnly = false;
+            let stored = '';
+            try { stored = localStorage.getItem('chefOverflowSubmitEmail') || ''; } catch (_) {}
+            if (stored && !emailInput.value) emailInput.value = stored;
+        }
+        emailInput.addEventListener('input', onAuthEmailInput);
+        emailInput.addEventListener('blur', onAuthEmailInput);
+        onAuthEmailInput();
+    }
+
+    function onAuthEmailInput() {
+        const val = (emailInput.value || '').trim();
+        const valid = EMAIL_RE.test(val);
+        emailInput.classList.toggle('is-invalid', val.length > 0 && !valid);
+        if (emailMsg) {
+            if (!val) {
+                emailMsg.textContent = 'Where to credit your score.';
+                emailMsg.classList.remove('is-error', 'is-ok');
+            } else if (!valid) {
+                emailMsg.textContent = 'Enter a valid email.';
+                emailMsg.classList.add('is-error');
+                emailMsg.classList.remove('is-ok');
+            } else {
+                emailMsg.textContent = 'Looks good.';
+                emailMsg.classList.add('is-ok');
+                emailMsg.classList.remove('is-error');
+            }
+        }
+        if (submitBtn) submitBtn.disabled = !valid;
+        if (valid) {
+            try { localStorage.setItem('chefOverflowSubmitEmail', val); } catch (_) {}
         }
     }
 }
@@ -2694,22 +2718,13 @@ async function _submitVerifiedScoreImpl() {
         return;
     }
 
-    // Prefer the email HT6 returned. If absent, fall back to the typed input.
-    // The server treats HT6-supplied emails as trusted and client-typed ones as
-    // best-effort; either way the HT6 session must be live or submit-score rejects.
     let email = (_ht6User.email || '').trim();
     if (!email) {
         const input = document.getElementById('auth-email-input');
         email = input ? input.value.trim() : '';
-        if (!EMAIL_RE.test(email)) {
-            statusEl.textContent = 'Enter the email you want listed on the leaderboard.';
-            if (input) input.focus();
-            return;
-        }
-        try { localStorage.setItem('chefOverflowSubmitEmail', email); } catch (_) {}
     }
     if (!EMAIL_RE.test(email)) {
-        statusEl.textContent = 'Email is invalid.';
+        statusEl.textContent = 'Enter a valid email above to submit.';
         return;
     }
 
