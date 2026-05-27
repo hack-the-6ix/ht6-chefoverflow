@@ -24,6 +24,9 @@ The site **must** be served from a subdomain of `hackthe6ix.com` (currently `che
 | `SUPABASE_URL` | yes | `/api/start-run`, `/api/submit-score`, `/api/health` |
 | `SUPABASE_SERVICE_ROLE_KEY` | yes | same — server-only, never expose to the browser |
 | `RUN_TOKEN_SECRET` | yes | HMAC for run tokens. Long random string (e.g. `openssl rand -hex 32`). Keep stable across deploys or in-flight tokens will fail. |
+| `HEALTH_TOKEN` | yes | Shared secret to gate `/api/health`. Set to any long random string. Requests without `x-health-token: <value>` get 404. |
+| `CRON_SECRET` | yes | Shared secret for the Vercel cron at `/api/cron-cleanup-tokens`. Vercel sets `Authorization: Bearer <value>` on scheduled invocations. |
+| `PLAUSIBILITY_MODE` | no | `log` (default) or `strict`. `log` accepts over-cap scores but logs them; flip to `strict` after watching real-run telemetry. |
 | `HT6_API_URL` | no | Defaults to `https://v2.api.hackthe6ix.com` |
 
 The browser bundle also needs `SUPABASE_URL` and `SUPABASE_ANON_KEY` inline in `index.html` (already there). The anon key is only used for public SELECTs on the leaderboard.
@@ -35,6 +38,8 @@ Apply in order from `supabase/migrations/`:
 1. `20260521090237_leaderboard_hardening.sql` — enables RLS, locks public writes, adds run_tokens.
 2. `20260526120000_submit_run_rpc.sql` — creates the atomic `submit_run` function. **Most likely missing piece if submit fails with `rpc_missing`.**
 3. `20260527130000_leaderboard_schema_guard.sql` — idempotent guard that ensures the leaderboard and run_tokens tables have every column the server needs. Safe to run on existing DBs.
+4. `20260528000000_leaderboard_public_view.sql` — creates `public.leaderboard_public` (masked emails) and revokes direct SELECT on the base table from `anon`/`authenticated`. The browser reads the view; service-role reads/writes go through the base table as before.
+5. `20260528010000_run_tokens_hygiene.sql` — adds the `(client_ip, issued_at)` index for the per-IP rate limit and (if `pg_cron` is available) schedules a 15-minute cleanup of stale tokens.
 
 Easiest application: Supabase Dashboard → SQL Editor → paste each file, run. Order matters for #1 only; #2 and #3 can be applied in either order, and both are idempotent.
 
@@ -78,7 +83,8 @@ Common reasons and what they mean:
 | `rpc_missing` | The `submit_run` migration hasn't been applied. See section 3. |
 | `table_missing` / `column_missing` | The leaderboard table has the wrong schema. Apply migration #3. |
 | `too_fast` | Run was shorter than 10 s. Play longer. |
-| `token_expired` | More than 30 min between game start and submit. Play a new game. |
+| `token_expired` | More than 65 min between game start and submit. Play a new game. |
+| `rate_limited` (from start-run) | More than 10 game starts from one IP in a minute. |
 | `token_used` | This run has already been submitted. Play a new game. |
 | `bad_signature` | HMAC mismatch. Most often means `RUN_TOKEN_SECRET` was changed between issuing the token and submitting. Reset and start a new run. |
 | `implausible_score` / `_delivered` / `_streak` | Plausibility caps tripped. Either an honest bug in the game's scoring or a tampered client. |
@@ -93,6 +99,12 @@ Vercel function logs (Vercel Dashboard → Project → Logs) also include the st
 3. Game starts → `POST /api/start-run` issues an HMAC run token.
 4. Game over → user clicks Submit → `POST /api/submit-score`. Vercel function re-verifies HT6 session (same forward-cookie pattern), validates HMAC + plausibility, calls `submit_run` RPC for the atomic claim + upsert.
 
-## 7. Cleanup
+## 7. Hitting `/api/health` post-deploy
 
-The old `supabase/functions/start-run/` and `supabase/functions/submit-score/` directories are superseded by the Vercel functions in `api/`. They can be deleted once the new endpoints are verified in production.
+`/api/health` is now gated. To call it:
+
+```bash
+curl -H 'x-health-token: <HEALTH_TOKEN>' https://chefoverflow.hackthe6ix.com/api/health
+```
+
+Without the header, the endpoint returns 404 by design — it shouldn't advertise itself to scanners.

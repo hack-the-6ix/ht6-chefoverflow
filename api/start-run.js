@@ -5,6 +5,11 @@
 
 import { db, hmacToken, json, readJsonBody } from './_lib.js';
 
+// Cap a single IP at 10 active tokens/minute. Without this, anonymous clients
+// can pile rows into run_tokens unbounded and inflate DB cost.
+const PER_IP_LIMIT = 10;
+const PER_IP_WINDOW_MS = 60 * 1000;
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
 
@@ -16,6 +21,18 @@ export default async function handler(req, res) {
     let supabase;
     try { supabase = db(); }
     catch (_) { return json(res, 500, { error: 'server_misconfigured' }); }
+
+    if (ip) {
+        const since = new Date(Date.now() - PER_IP_WINDOW_MS).toISOString();
+        const recent = await supabase
+            .from('run_tokens')
+            .select('id', { count: 'exact', head: true })
+            .eq('client_ip', ip)
+            .gte('issued_at', since);
+        if (!recent.error && typeof recent.count === 'number' && recent.count >= PER_IP_LIMIT) {
+            return json(res, 429, { error: 'rate_limited' });
+        }
+    }
 
     const { data, error } = await supabase
         .from('run_tokens')

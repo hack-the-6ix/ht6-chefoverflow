@@ -41,6 +41,16 @@ export default async function handler(req, res) {
         return res.end(JSON.stringify({ error: 'method_not_allowed' }));
     }
 
+    // Gate: require a shared secret. Return 404 (not 401) so the endpoint
+    // doesn't advertise itself to scanners.
+    const expected = process.env.HEALTH_TOKEN;
+    const provided = req.headers['x-health-token'];
+    if (!expected || provided !== expected) {
+        res.statusCode = 404;
+        res.setHeader('content-type', 'application/json');
+        return res.end(JSON.stringify({ error: 'not_found' }));
+    }
+
     const checks = [];
 
     // 1) Env

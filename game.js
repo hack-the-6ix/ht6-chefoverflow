@@ -2438,8 +2438,13 @@ function applySignedInUI() {
             try { stored = localStorage.getItem('chefOverflowSubmitEmail') || ''; } catch (_) {}
             if (stored && !emailInput.value) emailInput.value = stored;
         }
-        emailInput.addEventListener('input', onAuthEmailInput);
-        emailInput.addEventListener('blur', onAuthEmailInput);
+        // Bind once. applySignedInUI can be called multiple times (initial
+        // auth + restorePendingRunIfAny) and we don't want to stack handlers.
+        if (!emailInput.dataset.authBound) {
+            emailInput.addEventListener('input', onAuthEmailInput);
+            emailInput.addEventListener('blur', onAuthEmailInput);
+            emailInput.dataset.authBound = '1';
+        }
         onAuthEmailInput();
     }
 
@@ -2596,12 +2601,6 @@ function setLeaderboardOffline(isOffline) {
     if (banner) banner.style.display = isOffline ? '' : 'none';
 }
 
-function maskEmail(email) {
-    const [local, domain] = email.split('@');
-    if (!domain) return email;
-    return local.slice(0, 1) + '***@' + domain;
-}
-
 function loadLeaderboard() {
     try {
         const raw = localStorage.getItem(LEADERBOARD_KEY);
@@ -2620,8 +2619,8 @@ async function fetchTopScores() {
     if (!_db) return null;
     try {
         const { data, error } = await _db
-            .from('leaderboard')
-            .select('email, score, grade, streak')
+            .from('leaderboard_public')
+            .select('score')
             .order('score', { ascending: false })
             .limit(10);
         return error ? null : data;
@@ -2641,10 +2640,16 @@ function lbRowHTML(entry, i, maxScore = 0) {
     const rankClass = i < 3 ? ` lb-rank-${i + 1}` : '';
     const fill = maxScore > 0 ? Math.max(4, Math.min(100, (score / maxScore) * 100)) : 0;
     const rankLabel = i < 3 ? LB_RANK_LABELS[i] : `#${i + 1}`;
+    // masked_email comes from the leaderboard_public view; legacy entries
+    // (local fallback) may carry handle/email. Sanitize every path since
+    // this is the one place the leaderboard reaches innerHTML.
+    const rawWho = (entry && (entry.masked_email || entry.handle || entry.email)) || '';
+    const who = rawWho ? `<span class="lb-who">${_escapeHTML(rawWho)}</span>` : '';
     return `<div class="lb-score-row${rankClass}" style="--lb-fill:${fill.toFixed(1)}%">` +
         `<span class="lb-rank-fill" aria-hidden="true"></span>` +
         `<span class="lb-medal">${i + 1}</span>` +
         `<span class="lb-rank-label">${rankLabel}</span>` +
+        who +
         `<span class="lb-score-num">${score.toLocaleString()}<span class="lb-score-suffix">pts</span></span>` +
         `</div>`;
 }
@@ -2665,8 +2670,8 @@ async function fetchGlobalLeaderboard() {
     if (!_db) return null;
     try {
         const { data, error } = await _db
-            .from('leaderboard')
-            .select('email, score, grade, streak, delivered')
+            .from('leaderboard_public')
+            .select('masked_email, score, grade, streak, delivered')
             .order('score', { ascending: false })
             .limit(10);
         return error ? null : data;
@@ -2789,7 +2794,6 @@ async function _submitVerifiedScoreImpl() {
                 payload_too_large: 'Submission body was too large. Refresh the page.',
                 bad_run_id: 'Internal: run_id missing or invalid. Refresh and play a fresh game.',
                 bad_token: 'Internal: run token missing or malformed. Refresh and play a fresh game.',
-                bad_grade: 'Internal: invalid grade letter.',
                 bad_score: 'Internal: invalid score value.',
                 bad_streak: 'Internal: invalid streak value.',
                 bad_delivered: 'Internal: invalid delivered count.',

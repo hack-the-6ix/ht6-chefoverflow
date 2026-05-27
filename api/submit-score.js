@@ -14,18 +14,36 @@
 
 import { db, hmacToken, json, readJsonBody, timingSafeEqual, verifyHt6Session } from './_lib.js';
 
-const VALID_GRADES = new Set(['F', 'D', 'C', 'B', 'A', 'S']);
 const MAX_SCORE_PER_SEC = 250;
 const MAX_BURST = 1000;
 const MIN_RUN_SECONDS = 10;
 const MAX_RUN_SECONDS = 3600;
-const TOKEN_MAX_AGE_MS = 30 * 60 * 1000;
+// 65 min: leaves headroom for a full 60-min run plus the OAuth roundtrip
+// on submit. Must stay >= MAX_RUN_SECONDS + some slack.
+const TOKEN_MAX_AGE_MS = 65 * 60 * 1000;
 const TOKEN_MIN_AGE_MS = MIN_RUN_SECONDS * 1000;
 const RATE_LIMIT_MS = 30 * 1000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// 'log' (default): plausibility violations are logged but not rejected, so we
+// can tune caps from real-run data without burning legit players. Flip to
+// 'strict' via env once telemetry is in.
+const PLAUSIBILITY_MODE = process.env.PLAUSIBILITY_MODE === 'strict' ? 'strict' : 'log';
+
 function isInt(n, min, max) {
     return typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max;
+}
+
+// Server-authoritative grade. Mirrors gradeFromScore in game.js but is the
+// source of truth — we never trust the client-supplied grade.
+function gradeFromScore(score) {
+    const s = Math.floor(score);
+    if (s < 0) return 'F';
+    if (s < 500) return 'D';
+    if (s < 2000) return 'C';
+    if (s < 5000) return 'B';
+    if (s < 10000) return 'A';
+    return 'S';
 }
 
 // Compact, structured logger so the reason for every rejection lands
@@ -53,7 +71,7 @@ export default async function handler(req, res) {
                      auth.status === 502 ? 'ht6_unreachable' :
                                            'ht6_unauthenticated';
         logReject(code, { upstream_status: auth.status });
-        return json(res, auth.status === 401 ? 401 : auth.status, { error: code });
+        return json(res, auth.status, { error: code });
     }
 
     // 2) Parse + validate payload.
@@ -64,14 +82,12 @@ export default async function handler(req, res) {
         return rejectAndLog(res, 400, reason);
     }
 
-    const { run_id, token, email: clientEmail, score, grade, streak, delivered, time_secs } = body;
+    const { run_id, token, email: clientEmail, score, streak, delivered, time_secs } = body;
 
     if (typeof run_id !== 'string' || run_id.length < 10 || run_id.length > 64)
         return rejectAndLog(res, 400, 'bad_run_id', { run_id_type: typeof run_id, run_id_len: typeof run_id === 'string' ? run_id.length : null });
     if (typeof token !== 'string' || token.length < 20 || token.length > 200)
         return rejectAndLog(res, 400, 'bad_token', { token_type: typeof token, token_len: typeof token === 'string' ? token.length : null });
-    if (typeof grade !== 'string' || !VALID_GRADES.has(grade))
-        return rejectAndLog(res, 400, 'bad_grade', { grade });
     if (!isInt(score, 0, 10_000_000))
         return rejectAndLog(res, 400, 'bad_score', { score });
     if (!isInt(streak, 0, 10_000))
@@ -88,13 +104,28 @@ export default async function handler(req, res) {
     }
     const email = rawEmail.toLowerCase();
 
-    // 3) Plausibility.
-    if (score > time_secs * MAX_SCORE_PER_SEC + MAX_BURST)
-        return rejectAndLog(res, 400, 'implausible_score', { score, time_secs, cap: time_secs * MAX_SCORE_PER_SEC + MAX_BURST });
-    if (delivered > Math.floor(time_secs / 2))
-        return rejectAndLog(res, 400, 'implausible_delivered', { delivered, time_secs, cap: Math.floor(time_secs / 2) });
-    if (streak > delivered)
-        return rejectAndLog(res, 400, 'implausible_streak', { streak, delivered });
+    // 3) Plausibility. In 'log' mode we record violations but accept the
+    //    submission, so we can tune caps from real telemetry.
+    const plausibilityChecks = [
+        score > time_secs * MAX_SCORE_PER_SEC + MAX_BURST
+            ? { reason: 'implausible_score', ctx: { score, time_secs, cap: time_secs * MAX_SCORE_PER_SEC + MAX_BURST } }
+            : null,
+        delivered > Math.floor(time_secs / 2)
+            ? { reason: 'implausible_delivered', ctx: { delivered, time_secs, cap: Math.floor(time_secs / 2) } }
+            : null,
+        streak > delivered
+            ? { reason: 'implausible_streak', ctx: { streak, delivered } }
+            : null,
+    ].filter(Boolean);
+    for (const v of plausibilityChecks) {
+        if (PLAUSIBILITY_MODE === 'strict') {
+            return rejectAndLog(res, 400, v.reason, v.ctx);
+        }
+        logReject(`would_reject_${v.reason}`, { ...v.ctx, mode: 'log' });
+    }
+
+    // Server-authoritative grade. Client value is ignored.
+    const grade = gradeFromScore(score);
 
     // 4) HMAC signature on the run token. We still need this in Node since the
     //    secret lives in env. The RPC just trusts that we verified it.
