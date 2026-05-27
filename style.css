@@ -780,19 +780,6 @@ body.game-running #start-btn {
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-}
-
-#leaderboard-panel h3::before {
-    content: '';
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
-    background: linear-gradient(135deg, #F6D77A 0%, var(--ht6-gold) 55%, var(--ht6-amber) 100%);
-    border-radius: var(--radius-sm);
-    box-shadow: 0 0 14px rgba(232, 184, 75, 0.55);
 }
 
 #side-lb-list {
@@ -809,9 +796,9 @@ body.game-running #start-btn {
 .lb-score-row {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 11px 13px;
-    border-radius: var(--radius-xl);
+    gap: 14px;
+    padding: 12px 16px;
+    border-radius: var(--radius-lg);
     background: rgba(0, 0, 0, 0.24);
     border: 1px solid rgba(255, 255, 255, 0.06);
     transition: transform 0.15s ease, box-shadow 0.15s ease;
@@ -822,19 +809,70 @@ body.game-running #start-btn {
 }
 
 .lb-medal {
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     font-family: var(--font-heading);
     font-weight: var(--font-weight-extra);
-    font-size: var(--text-xs);
+    font-size: var(--text-small);
     flex-shrink: 0;
     background: rgba(255, 255, 255, 0.06);
     color: var(--text-secondary);
     border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.lb-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    flex: 1;
+}
+
+.lb-handle {
+    font-size: var(--text-xs);
+    font-weight: var(--font-weight-heading);
+    color: var(--text-primary);
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    letter-spacing: 0.01em;
+}
+
+.lb-tags {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.lb-grade {
+    font-family: var(--font-heading);
+    font-weight: var(--font-weight-extra);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.lb-grade-s { color: var(--ht6-gold); border-color: rgba(232,184,75,0.45); background: rgba(232,184,75,0.12); }
+.lb-grade-a { color: var(--ht6-teal); border-color: rgba(68,217,184,0.42); background: rgba(68,217,184,0.10); }
+.lb-grade-b { color: var(--info); border-color: rgba(96,165,250,0.40); background: rgba(96,165,250,0.10); }
+.lb-grade-c { color: var(--ht6-gold); border-color: rgba(232,184,75,0.35); background: rgba(232,184,75,0.08); }
+.lb-grade-d { color: var(--ht6-amber); border-color: rgba(212,148,76,0.38); background: rgba(212,148,76,0.10); }
+.lb-grade-f { color: var(--ht6-silver); border-color: rgba(184,196,208,0.30); background: rgba(184,196,208,0.08); }
+
+.lb-streak {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    letter-spacing: 0.02em;
 }
 
 .lb-score-num {
@@ -850,23 +888,27 @@ body.game-running #start-btn {
     background: linear-gradient(100deg, rgba(232, 184, 75, 0.22) 0%, rgba(232, 184, 75, 0.05) 100%);
     border-color: rgba(232, 184, 75, 0.45);
     box-shadow: 0 0 22px rgba(232, 184, 75, 0.16);
-    padding: 14px 13px;
+    padding: 10px 11px;
 }
 
 .lb-score-row.lb-rank-1 .lb-medal {
-    width: 34px;
-    height: 34px;
-    font-size: var(--text-body);
+    width: 38px;
+    height: 38px;
+    font-size: var(--text-small);
     background: linear-gradient(135deg, #F6D77A, var(--ht6-gold));
     color: #4A3208;
     border-color: rgba(255, 240, 200, 0.6);
-    box-shadow: 0 0 16px rgba(232, 184, 75, 0.6);
+    box-shadow: 0 0 14px rgba(232, 184, 75, 0.55);
+}
+
+.lb-score-row.lb-rank-1 .lb-handle {
+    color: var(--text-highlight);
 }
 
 .lb-score-row.lb-rank-1 .lb-score-num {
     color: var(--ht6-gold);
     font-size: var(--text-h3);
-    text-shadow: 0 0 18px rgba(232, 184, 75, 0.45);
+    text-shadow: 0 0 16px rgba(232, 184, 75, 0.40);
 }
 
 .lb-score-row.lb-rank-2 {
@@ -1155,7 +1197,7 @@ body.game-running #start-btn {
     flex-direction: column;
     align-items: center;
     text-align: center;
-    margin-bottom: 28px;
+    margin-bottom: 14px;
 }
 
 .recipes-eyebrow {
@@ -1164,7 +1206,7 @@ body.game-running #start-btn {
     text-transform: uppercase;
     letter-spacing: 0.22em;
     color: var(--ht6-gold);
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 
 #recipes-panel h3 {
@@ -1185,32 +1227,18 @@ body.game-running #start-btn {
 
 .recipe-grid {
     display: flex;
-    flex-direction: column;
-    gap: 26px;
-    width: 100%;
-}
-
-.recipe-row {
-    display: flex;
     justify-content: center;
     align-items: stretch;
-    padding: 14px 0;
-}
-
-.recipe-row--3 {
-    max-width: 76%;
-    margin-inline: auto;
+    width: 100%;
+    padding: 8px 0 0;
+    overflow: visible;
 }
 
 .recipe-card {
     --diff: var(--ht6-teal);
-    --sx: 0px;
-    --sy: 0px;
-    --sr: 0deg;
-    --ss: 1;
-    flex: 1 1 0;
-    min-width: 0;
-    margin-left: -34px;
+    flex: 0 0 230px;
+    width: 230px;
+    margin-left: -170px;
     position: relative;
     background: #241753;
     padding: 18px;
@@ -1221,14 +1249,26 @@ body.game-running #start-btn {
     box-shadow:
         0 10px 26px rgba(0, 0, 0, 0.45),
         0 0 22px color-mix(in srgb, var(--diff) 13%, transparent);
-    transform: translate(var(--sx), var(--sy)) rotate(var(--sr)) scale(var(--ss));
-    transition: translate 0.2s ease, scale 0.2s ease, box-shadow 0.22s ease, border-color 0.22s ease;
-    will-change: transform;
+    transition:
+        translate 0.32s cubic-bezier(0.2, 0.7, 0.2, 1),
+        scale 0.28s ease,
+        box-shadow 0.22s ease,
+        border-color 0.22s ease;
+    will-change: translate;
 }
 
 .recipe-card:first-child {
     margin-left: 0;
 }
+
+/* Later cards in the DOM paint on top so the row reads as a fanned deck. */
+.recipe-card:nth-child(1) { z-index: 1; }
+.recipe-card:nth-child(2) { z-index: 2; }
+.recipe-card:nth-child(3) { z-index: 3; }
+.recipe-card:nth-child(4) { z-index: 4; }
+.recipe-card:nth-child(5) { z-index: 5; }
+.recipe-card:nth-child(6) { z-index: 6; }
+.recipe-card:nth-child(7) { z-index: 7; }
 
 .recipe-card[data-difficulty="1"] { --diff: #44D9B8; }
 .recipe-card[data-difficulty="2"] { --diff: #E8B84B; }
@@ -1236,25 +1276,42 @@ body.game-running #start-btn {
 .recipe-card[data-difficulty="4"] { --diff: #E06050; }
 
 .recipe-card:hover {
-    z-index: 20;
-    translate: 0 -12px;
-    scale: 1.035;
+    z-index: 50;
+    translate: 0 -8px;
+    scale: 1.04;
     border-color: color-mix(in srgb, var(--diff) 55%, transparent);
     box-shadow:
         0 26px 52px rgba(0, 0, 0, 0.6),
         0 0 44px color-mix(in srgb, var(--diff) 34%, transparent);
 }
 
+/* Cards after the hovered one slide right; cards before slide left —
+   the row spreads apart symmetrically so the hovered card is revealed. */
+.recipe-card:hover ~ .recipe-card {
+    translate: 150px 0;
+}
+
+.recipe-card:has(~ .recipe-card:hover) {
+    translate: -150px 0;
+}
+
 @media (max-width: 1100px) {
-    .recipe-row,
-    .recipe-row--3 {
+    .recipe-grid {
         flex-wrap: wrap;
-        max-width: 100%;
+        gap: 12px;
+        padding: 8px 0;
     }
 
     .recipe-card {
         flex: 1 1 240px;
+        width: auto;
         margin-left: 0;
+    }
+
+    .recipe-card:hover,
+    .recipe-card:hover ~ .recipe-card,
+    .recipe-card:has(~ .recipe-card:hover) {
+        translate: none;
     }
 }
 
@@ -1728,31 +1785,9 @@ body.game-running #start-btn {
     gap: 10px;
 }
 
-.game-over-actions .btn-share {
-    flex: 0 0 38%;
-}
-
 .game-over-actions .btn-restart,
 .game-over-actions #restart-btn {
     flex: 1;
-}
-
-.btn-share {
-    width: 100%;
-    padding: 12px 16px;
-    font-size: var(--text-body);
-    font-weight: var(--font-weight-heading);
-    border-radius: var(--radius-lg);
-    border: 1px solid rgba(68, 217, 184, 0.45);
-    background: rgba(68, 217, 184, 0.12);
-    color: var(--text-accent);
-    cursor: pointer;
-    transition: background 0.2s ease, transform 0.2s ease;
-}
-
-.btn-share:hover {
-    background: rgba(68, 217, 184, 0.22);
-    transform: translateY(-1px);
 }
 
 .btn-restart,

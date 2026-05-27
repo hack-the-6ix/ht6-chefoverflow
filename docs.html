@@ -282,6 +282,29 @@ KitchenAPI.start();</code></pre>
     <p>Unregisters the agent set by <code>run()</code>. Does not stop the game.</p>
     <p><strong>Returns:</strong> <code>undefined</code>.</p>
 
+    <h3>KitchenAPI.plan(fn, opts)</h3>
+    <p><strong>Canonical LLM entry point.</strong> Registers an <strong>async</strong> planner that runs on a cadence (default every 1000ms, clamped 100–60000ms) independent of the game's tick loop. The planner's return value is stored as the current <em>policy</em> and exposed on <code>state.policy</code> and via <code>KitchenAPI.getPolicy()</code>. Re-entrancy is guarded — if a planner call takes longer than the interval, subsequent ticks are skipped rather than queued.</p>
+    <p><strong>Signature:</strong> <code>fn(state, api) → Promise&lt;policy&gt;</code>. Exceptions are caught and logged; the last good policy is preserved on error.</p>
+    <p>Use <code>plan()</code> together with <code>run()</code> for the two-tier pattern: a slow async planner sets policy, a fast sync executor dispatches commands against it. This is the recommended shape for any agent whose decision step takes longer than a frame (LLMs, MILP solvers, search-based planners).</p>
+    <pre><code>KitchenAPI.plan(async (s) =&gt; {
+  // Slow side: call an LLM, solve an LP, whatever takes &gt;16ms.
+  // Return any object — it becomes state.policy.
+  const urgent = [...s.orders].sort((a, b) =&gt; a.timeLeft - b.timeLeft)[0];
+  return { focusDish: urgent?.dish || null };
+}, { everyMs: 2000 });
+
+KitchenAPI.run((s, api) =&gt; {
+  // Fast side: dispatch against the current policy.
+  if (!s.running || s.paused || !s.policy) return;
+  // ...act on s.policy.focusDish with the same per-tick guards as before.
+});</code></pre>
+
+    <h3>KitchenAPI.unplan()</h3>
+    <p>Unregisters the planner. Clears the current policy. Does not affect the <code>run()</code> agent.</p>
+
+    <h3>KitchenAPI.getPolicy()</h3>
+    <p>Returns the latest value the planner returned (or <code>null</code> if no planner is registered or it hasn't resolved yet).</p>
+
     <h3>KitchenAPI.clearListeners()</h3>
     <p>Removes all event listeners registered via <code>on()</code> / <code>onTick()</code> / etc. The <code>run()</code> agent is re-attached automatically. Useful to reset raw listeners without restarting.</p>
     <p><strong>Returns:</strong> <code>undefined</code>.</p>
@@ -332,7 +355,8 @@ if (!r.success) console.error(r.error);</code></pre>
     hasPath: boolean,
     boostActive: boolean,
     boostTime: number,
-    boostCooldown: number
+    boostCooldown: number,
+    stall: number            // seconds remaining of commitment-cost stall, 0 if free
   }],
   stations: {
     ingredientBins:   [{ id, name, pos, ingredient }],
@@ -344,6 +368,12 @@ if (!r.success) console.error(r.error);</code></pre>
     counters:         [{ id, pos, items }]
   },
   orders: [{ id, dish, timeLeft, standId, components }],
+  upcomingOrders: [{         // next 3 orders, pre-rolled — agents can pre-stage
+    dish: string,
+    components: [{ ingredient, state }, ...],
+    etaSeconds: number       // estimated seconds until this becomes a live order
+  }],
+  policy: any,               // latest value returned by KitchenAPI.plan() planner, or null
   recipes: object            // full internal RECIPES table
 }</div>
     <p>Reception <code>order</code> when present: <code>{ id, dish, timeLeft, components }</code>. Stove <code>ready</code> / <code>burnt</code> mirror the UI progress thresholds.</p>
@@ -363,6 +393,7 @@ if (!r.success) console.error(r.error);</code></pre>
             <tr><td><code>KitchenAPI.onOrderDelivered(fn)</code></td><td><code>'orderDelivered'</code></td><td><code>{ id, dish, score, streak }</code></td></tr>
             <tr><td><code>KitchenAPI.onOrderFailed(fn)</code></td><td><code>'orderFailed'</code></td><td><code>{ dish }</code></td></tr>
             <tr><td><code>KitchenAPI.onPhaseChanged(fn)</code></td><td><code>'phaseChanged'</code></td><td><code>{ phase }</code></td></tr>
+            <tr><td><code>KitchenAPI.onRushBurst(fn)</code></td><td><code>'rushBurst'</code></td><td><code>{ count }</code> — fires when rush activates and spawns a burst of orders simultaneously</td></tr>
             <tr><td><code>KitchenAPI.onGameOver(fn)</code></td><td><code>'gameOver'</code></td><td><code>{ score, time, bestStreak }</code></td></tr>
         </tbody>
     </table>
@@ -412,6 +443,10 @@ if (!r.success) console.error(r.error);</code></pre>
         <li><strong>VIP orders</strong> — shorter timer, 1.5× score (marked ★ in the UI).</li>
         <li><strong>Streak multiplier</strong> — +5% per consecutive correct delivery, capped at 2× by streak 20; any wrong delivery or expiry resets it.</li>
         <li><strong>Rush mode</strong> — periodic spawn-rate spike; check <code>state.rush.active</code> to react.</li>
+        <li><strong>Rush bursts</strong> — when rush activates, up to <strong>3 orders spawn simultaneously</strong> (clamped to free reception stands), then sustained pressure continues at a milder rate. Subscribe <code>onRushBurst</code> or watch for back-to-back <code>onOrderSpawned</code> events to react in time.</li>
+        <li><strong>Lookahead</strong> — <code>state.upcomingOrders</code> previews the next 3 dishes before they go live, each with an estimated <code>etaSeconds</code>. The dishes are locked in (no re-roll on consumption), but ETAs are estimates and will shorten dramatically when rush triggers.</li>
+        <li><strong>Commitment cost</strong> — redirecting a chef mid-route (issuing <code>command()</code> while the chef still has ≥3 tiles of path to a <em>different</em> target) costs a <strong>1.5s stall</strong>. Idempotent re-issues (same target) and commands from idle are free. Check <code>chef.stall</code> before issuing new commands. Applies equally to human clicks and agent commands.</li>
+        <li><strong>Planner channel</strong> — register an async planner with <code>KitchenAPI.plan(asyncFn, { everyMs: 1000 })</code>. The planner runs independently of the tick loop; its return value is exposed on <code>state.policy</code> for a fast <code>run()</code> executor to dispatch against. This is how to integrate an LLM without starving the game loop.</li>
     </ul>
 
     <h2>7. Agent Architecture Tips</h2>
@@ -423,6 +458,10 @@ if (!r.success) console.error(r.error);</code></pre>
         <li><strong>Guard every <code>command()</code></strong> with <code>running &amp;&amp; !paused &amp;&amp; !chef.busy &amp;&amp; !chef.hasPath</code> to avoid error spam.</li>
         <li><strong>Pre-route on <code>onOrderSpawned</code></strong> rather than polling each tick to cut latency.</li>
         <li><strong>Trash burnt items</strong> — check <code>stove.burnt</code> and clear it promptly.</li>
+        <li><strong>Pre-stage on <code>upcomingOrders</code></strong> — if a Pizza is 8 seconds out, start cooking dough now. Reactive agents that only react to <code>onOrderSpawned</code> waste the cook/chop window.</li>
+        <li><strong>On rush activation, parallelize cooks across all 3 stoves</strong> — sequential service against a 3-order burst will leave at least one order to expire. Use <code>onRushBurst</code> to trigger your batch path.</li>
+        <li><strong>Commit your plans</strong> — once a chef is en route to a station, only redirect if the new destination is strictly better than completing the current one. Each redirect costs 1.5s; two stalls per chef per minute is a meaningful score drag in endurance.</li>
+        <li><strong>Two-tier pattern for LLMs (and slow planners)</strong> — use <code>KitchenAPI.plan()</code> for the decision step (set roles, assign chefs to orders, batch upcoming pizzas) and <code>KitchenAPI.run()</code> for the dispatch step (cheap per-tick guards + <code>command()</code>). Don't <code>await</code> inside <code>run()</code> — the tick loop will block.</li>
     </ul>
 
     <h2>8. Example Agents</h2>
@@ -483,6 +522,63 @@ if (!r.success) console.error(r.error);</code></pre>
   if (!h2)                                          { go(2, 'plating_1');     return; }
   if (h2.type === 'plate' &&  h2.items?.length > 0) { go(2, urgent.standId);  return; }
 });</code></pre>
+
+    <h3>Example 3: Lookahead pre-stager (beats Example 2)</h3>
+    <p>Uses <code>upcomingOrders</code> to start cooking <em>before</em> the order is live. When a Pizza is forecast within 10 seconds, Chef 0 picks up dough and stoves it now — so the dough is already cooked by the time the order spawns. The same pattern generalizes to any cook-bound recipe.</p>
+    <pre><code>KitchenAPI.run((s, api) => {
+  if (!s.running || s.paused) return;
+  const c = s.chefs[0];
+  if (c.busy || c.hasPath) return;
+
+  // Live work wins over speculative work.
+  const livePizza = s.orders.find(o => o.dish === 'Pizza' || o.dish === 'Supreme Pizza');
+  const soonPizza = s.upcomingOrders.find(u =>
+    (u.dish === 'Pizza' || u.dish === 'Supreme Pizza') && u.etaSeconds &lt; 10
+  );
+  const want = livePizza || soonPizza;
+  if (!want) return;
+
+  const h = c.holding;
+  const platItems = s.stations.platingAreas[0].items || [];
+  const doughReady = platItems.some(i => i.ingredient === 'dough' && i.state === 'cooked');
+
+  if (!h) { api.command(0, doughReady ? 'plating_0' : 'bin_4'); return; }
+  if (h.ingredient === 'dough' && h.state === 'raw')    { api.command(0, 'stove_0');   return; }
+  if (h.ingredient === 'dough' && h.state === 'cooked') { api.command(0, 'plating_0'); return; }
+});</code></pre>
+    <div class="tip tip-info">The key shift vs Example 2: this agent acts on <em>predicted</em> demand, not just observed orders. Combine with <code>onRushBurst</code> to switch into a batch-parallel mode the instant rush hits, and you'll consistently outscore role-split FSMs in endurance.</div>
+
+    <h3>Example 4: LLM planner + executor scaffold</h3>
+    <p>The canonical shape for any agent whose decision step is slower than a frame. The planner runs every 2 seconds (swap in <code>fetch()</code> to your model of choice); the executor runs every tick and just dispatches against the latest policy. The game loop never blocks on the LLM.</p>
+    <pre><code>// Replace this with a real model call to Anthropic / OpenAI / your backend.
+async function callLLM(state) {
+  // ... await fetch('/api/plan', { method: 'POST', body: JSON.stringify(state) })
+  // For this skeleton, just pick the most urgent dish.
+  const urgent = [...state.orders].sort((a, b) =&gt; a.timeLeft - b.timeLeft)[0];
+  return { assignments: { 0: urgent?.dish || null } };
+}
+
+KitchenAPI.plan(async (s) =&gt; await callLLM(s), { everyMs: 2000 });
+
+KitchenAPI.run((s, api) =&gt; {
+  if (!s.running || s.paused || !s.policy) return;
+  const dish = s.policy.assignments?.[0];
+  if (!dish) return;
+  const order = s.orders.find(o =&gt; o.dish === dish);
+  if (!order) return;
+  const c = s.chefs[0];
+  if (c.busy || c.hasPath || c.stall &gt; 0) return;
+  // ... your per-recipe dispatch logic here, e.g. for Steak:
+  if (dish === 'Steak') {
+    const h = c.holding;
+    if (!h) api.command(0, 'bin_3');
+    else if (h.ingredient === 'meat' && h.state === 'raw')    api.command(0, 'stove_0');
+    else if (h.ingredient === 'meat' && h.state === 'cooked') api.command(0, 'plating_0');
+    else if (h.type === 'plate') api.command(0, order.standId);
+  }
+});</code></pre>
+    <div class="tip tip-warn">Don't <code>await</code> inside <code>run()</code>. The executor runs every frame and must return in &lt;16ms. All slow work belongs in <code>plan()</code>.</div>
+    <div class="tip tip-info">The planner kicks once immediately on register, so <code>state.policy</code> is populated quickly. Subsequent updates happen on the <code>everyMs</code> cadence; if a planner call exceeds the interval, the next tick is <em>skipped</em>, not queued — so you can't accidentally pile up in-flight LLM calls.</div>
 
     <footer>
         <p>Built for <strong>Hack the 6ix 2026</strong>, Toronto's largest summer hackathon.</p>

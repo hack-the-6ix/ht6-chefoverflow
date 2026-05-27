@@ -39,6 +39,8 @@ const GameState = {
     },
     /** Frametime accumulator for steadier order spawn rate than pure Poisson */
     orderSpawnDebt: 0,
+    /** Pre-rolled queue of next orders; surfaced agent-only via KitchenAPI.getState() */
+    upcomingOrders: [],
     ordersDelivered: 0,
     phaseBanner60: false,
     phaseBanner150: false,
@@ -85,6 +87,37 @@ function registerAgent() {
             try { _agentFn(window.KitchenAPI.getState(), window.KitchenAPI, data); }
             catch (e) { console.error('Agent error:', e); }
         });
+    }
+}
+
+// Slow-tick planner channel: async fn called on a cadence, return value is the
+// current policy. The fast run() executor reads it via state.policy.
+let _plannerFn = null;
+let _plannerIntervalId = null;
+let _plannerEveryMs = 1000;
+let _plannerInFlight = false;
+let _policy = null;
+
+async function runPlannerTick() {
+    if (!_plannerFn || _plannerInFlight) return;
+    _plannerInFlight = true;
+    try {
+        const result = await _plannerFn(window.KitchenAPI.getState(), window.KitchenAPI);
+        _policy = result === undefined ? _policy : result;
+    } catch (e) {
+        console.error('Planner error:', e);
+    } finally {
+        _plannerInFlight = false;
+    }
+}
+
+function registerPlanner() {
+    if (_plannerIntervalId) { clearInterval(_plannerIntervalId); _plannerIntervalId = null; }
+    if (typeof _plannerFn === 'function') {
+        _plannerIntervalId = setInterval(runPlannerTick, _plannerEveryMs);
+        // Kick once so the executor has a policy on the first frame instead of
+        // waiting for the first interval to elapse.
+        runPlannerTick();
     }
 }
 
@@ -153,7 +186,7 @@ function baseOrderSpawnInterval(time, rushActive) {
     } else {
         normal = Math.max(2.5, 4 - (time - 600) * 0.003);  // 4→2.5s over ~500s
     }
-    if (rushActive) normal *= 0.52;
+    if (rushActive) normal *= 0.70;
     const perf = getPerformanceAdjustment();
     return Math.max(2.5, normal * (1 - perf * 0.35));
 }
@@ -857,7 +890,8 @@ function initChefs() {
             waitingAtStove: null,
             boostActive: false,
             boostTime: 0,
-            boostCooldown: 0
+            boostCooldown: 0,
+            commitmentStall: 0
         });
     });
 }
@@ -879,6 +913,36 @@ function failOrderNoStandSlot() {
     showFloatingText(10, 7, 'No room! Order lost!', '#f44336', { fontSize: 22, life: 3, maxLife: 3, drift: 0 });
 }
 
+const UPCOMING_QUEUE_SIZE = 3;
+
+/** Roll a single upcoming-order spec at the current time. Pure: no game-state mutation. */
+function rollUpcomingOrder() {
+    const names = getRecipeNamesForSpawn(GameState.time);
+    const recipeEntries = names
+        ? names.map(name => [name, RECIPES[name]])
+        : Object.entries(RECIPES);
+    const [dishName, recipe] = recipeEntries[Math.floor(Math.random() * recipeEntries.length)];
+    const timeLimit = orderTimeLimitForSpawn(GameState.time);
+    const vip = Math.random() < Math.min(0.16, 0.07 + GameState.time / 9000);
+    return { dish: dishName, recipe, timeLimit, vip, etaSeconds: 0 };
+}
+
+/** Top the queue up to UPCOMING_QUEUE_SIZE. Safe to call every tick. */
+function refillUpcomingQueue() {
+    while (GameState.upcomingOrders.length < UPCOMING_QUEUE_SIZE) {
+        GameState.upcomingOrders.push(rollUpcomingOrder());
+    }
+}
+
+/** Recompute etaSeconds for every queued order against the current spawn interval. */
+function recomputeUpcomingEtas() {
+    const spawnEvery = baseOrderSpawnInterval(GameState.time, GameState.rush.active);
+    const debt = Math.max(0, Math.min(1, GameState.orderSpawnDebt));
+    for (let i = 0; i < GameState.upcomingOrders.length; i++) {
+        GameState.upcomingOrders[i].etaSeconds = Math.max(0, (i + 1 - debt) * spawnEvery);
+    }
+}
+
 /** @returns {boolean} true if a spawn was resolved (new order or high-pressure penalty) */
 function spawnOrder() {
     const phase = getPhaseKey(GameState.time);
@@ -894,23 +958,20 @@ function spawnOrder() {
 
     const stand = availableStands[Math.floor(Math.random() * availableStands.length)];
 
-    const names = getRecipeNamesForSpawn(GameState.time);
-    const recipeEntries = names
-        ? names.map(name => [name, RECIPES[name]])
-        : Object.entries(RECIPES);
-    const [dishName, recipe] = recipeEntries[Math.floor(Math.random() * recipeEntries.length)];
+    refillUpcomingQueue();
+    const spec = GameState.upcomingOrders.shift();
+    refillUpcomingQueue();
 
-    const timeLimit = orderTimeLimitForSpawn(GameState.time);
-
-    const vip = Math.random() < Math.min(0.16, 0.07 + GameState.time / 9000);
+    const { dish: dishName, recipe, timeLimit, vip } = spec;
+    const adjusted = vip ? Math.floor(timeLimit * 0.85) : timeLimit;
 
     const order = {
         id: orderIdCounter++,
         dish: dishName,
         icon: recipe.icon || RECIPE_ICON_BY_NAME[dishName] || 'ORD',
         recipe: recipe,
-        timeLeft: vip ? Math.floor(timeLimit * 0.85) : timeLimit,
-        maxTime: vip ? Math.floor(timeLimit * 0.85) : timeLimit,
+        timeLeft: adjusted,
+        maxTime: adjusted,
         vip: vip,
         standId: stand.id
     };
@@ -1038,6 +1099,23 @@ function findAdjacentWalkable(stationX, stationY) {
 function isChefAdjacentToStation(chefX, chefY, stationX, stationY) {
     const manhattan = Math.abs(chefX - stationX) + Math.abs(chefY - stationY);
     return manhattan === 1 && isWalkable(chefX, chefY);
+}
+
+// Mid-route redirects pay a stall — rewards committed plans, punishes per-tick
+// micro-correction. Applied universally to human clicks and agent commands.
+const COMMITMENT_STALL_SECONDS = 1.5;
+const COMMITMENT_STALL_MIN_REMAINING = 3;
+function assignChefPath(chef, newPath, newTargetStation) {
+    const wasInTransit = chef.path && chef.path.length >= COMMITMENT_STALL_MIN_REMAINING;
+    const oldStationId = chef.targetStation?.station?.id;
+    const newStationId = newTargetStation?.station?.id;
+    const changingTarget = oldStationId !== newStationId;
+    if (wasInTransit && changingTarget) {
+        chef.commitmentStall = COMMITMENT_STALL_SECONDS;
+        showFloatingText(chef.x, chef.y - 0.5, 'STALL', '#ff7043', { fontSize: 14, life: 1.2, maxLife: 1.2, drift: -0.4 });
+    }
+    chef.path = newPath;
+    chef.targetStation = newTargetStation;
 }
 
 // =============================================
@@ -1425,9 +1503,22 @@ function update(dt) {
                 ? 12 + Math.random() * 8
                 : 10 + Math.random() * 6;
             showFloatingText(12, 2, 'RUSH HOUR!', '#ffd54f');
+
+            // Burst: spawn up to 3 orders at once, clamped to free stands.
+            const freeStands = stations.receptionStands.filter(standFreeForOrder).length;
+            const burstTarget = Math.min(3, freeStands);
+            let burstSpawned = 0;
+            for (let i = 0; i < burstTarget; i++) {
+                if (spawnOrder()) burstSpawned++;
+                else break;
+            }
+            if (burstSpawned > 0) {
+                EventBus.emit('rushBurst', { count: burstSpawned });
+            }
         }
     }
 
+    refillUpcomingQueue();
     const spawnEvery = baseOrderSpawnInterval(GameState.time, GameState.rush.active);
     GameState.orderSpawnDebt += dt / spawnEvery;
     let spawnsThisFrame = 0;
@@ -1439,6 +1530,7 @@ function update(dt) {
         GameState.orderSpawnDebt -= 1;
         spawnsThisFrame++;
     }
+    recomputeUpcomingEtas();
     
     // Update chefs
     for (const chef of chefs) {
@@ -1482,6 +1574,10 @@ function updateChef(chef, dt) {
             chef.boostActive = false;
             chef.boostTime = 0;
         }
+    }
+    if (chef.commitmentStall > 0) {
+        chef.commitmentStall = Math.max(0, chef.commitmentStall - dt);
+        return;
     }
 
     if (chef.actionTimer > 0) {
@@ -2437,7 +2533,7 @@ async function fetchTopScores() {
     try {
         const { data, error } = await _db
             .from('leaderboard')
-            .select('score')
+            .select('email, score, grade, streak')
             .order('score', { ascending: false })
             .limit(10);
         return error ? null : data;
@@ -2446,7 +2542,12 @@ async function fetchTopScores() {
     }
 }
 
-function lbRowHTML(score, i) {
+function _escapeHTML(s) {
+    return String(s).replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function lbRowHTML(entry, i) {
+    const score = Number(entry && entry.score) || 0;
     const rankClass = i < 3 ? ` lb-rank-${i + 1}` : '';
     return `<div class="lb-score-row${rankClass}">` +
         `<span class="lb-medal">${i + 1}</span>` +
@@ -2462,7 +2563,7 @@ async function renderSideLeaderboard() {
         mount.innerHTML = '<div class="orders-empty">No scores yet.</div>';
         return;
     }
-    mount.innerHTML = scores.map((e, i) => lbRowHTML(e.score, i)).join('');
+    mount.innerHTML = scores.map((e, i) => lbRowHTML(e, i)).join('');
 }
 
 async function fetchGlobalLeaderboard() {
@@ -2485,7 +2586,7 @@ async function renderLeaderboard() {
 
     const global = await fetchGlobalLeaderboard();
     if (global && global.length > 0) {
-        mount.innerHTML = global.map((e, i) => lbRowHTML(e.score, i)).join('');
+        mount.innerHTML = global.map((e, i) => lbRowHTML(e, i)).join('');
         return;
     }
 
@@ -2494,7 +2595,7 @@ async function renderLeaderboard() {
         mount.innerHTML = '<div class="orders-empty">No verified runs yet.</div>';
         return;
     }
-    mount.innerHTML = entries.map((e, i) => lbRowHTML(e.score, i)).join('');
+    mount.innerHTML = entries.map((e, i) => lbRowHTML(e, i)).join('');
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -2863,8 +2964,7 @@ canvas.addEventListener('click', (e) => {
                 } else {
                     const path = findPath(chef.x, chef.y, adjacent.x, adjacent.y);
                     if (path.length > 0) {
-                        chef.path = path;
-                        chef.targetStation = stationInfo;
+                        assignChefPath(chef, path, stationInfo);
                     }
                 }
             }
@@ -2916,6 +3016,8 @@ function activateBoost() {
 function startGame() {
     EventBus.clear();
     registerAgent();
+    _policy = null;
+    registerPlanner();
     GameState.running = true;
     GameState.paused = false;
     GameState.gameOver = false;
@@ -2939,7 +3041,9 @@ function startGame() {
     GameState.rush.timeLeft = 0;
     GameState.rush.cooldown = 20;
     GameState.orderSpawnDebt = 0;
-    
+    GameState.upcomingOrders = [];
+    refillUpcomingQueue();
+
     // Reset stations
     stations.stoves.forEach(s => { s.cooking = null; s.cookTime = 0; s.busy = false; });
     stations.cuttingBoards.forEach(s => { s.processing = null; s.processTime = 0; s.busy = false; });
@@ -3027,16 +3131,6 @@ document.getElementById('restart-btn').addEventListener('click', startGame);
 const submitScoreBtn = document.getElementById('submit-score-btn');
 if (submitScoreBtn) submitScoreBtn.addEventListener('click', submitVerifiedScore);
 
-const shareBtn = document.getElementById('share-btn');
-if (shareBtn) {
-    shareBtn.addEventListener('click', () => {
-        const score = document.getElementById('final-score')?.textContent || '0';
-        const grade = document.getElementById('final-grade')?.textContent || '?';
-        const streak = document.getElementById('best-streak')?.textContent || '0';
-        const text = `I scored ${score} in Chef Overflow (Grade: ${grade}, Streak: ${streak}). Can you beat me?`;
-        navigator.clipboard.writeText(text).catch(() => {});
-    });
-}
 
 // =============================================
 // AGENT API (for programmatic control)
@@ -3077,7 +3171,8 @@ window.KitchenAPI = {
             hasPath: c.path.length > 0,
             boostActive: c.boostActive,
             boostTime: c.boostTime,
-            boostCooldown: c.boostCooldown
+            boostCooldown: c.boostCooldown,
+            stall: c.commitmentStall
         })),
         stations: {
             ingredientBins: stations.ingredientBins.map(b => ({
@@ -3139,6 +3234,12 @@ window.KitchenAPI = {
             standId: o.standId,
             components: o.recipe.components
         })),
+        upcomingOrders: GameState.upcomingOrders.map(u => ({
+            dish: u.dish,
+            components: u.recipe.components.map(c => ({ ingredient: c.ingredient, state: c.state })),
+            etaSeconds: u.etaSeconds
+        })),
+        policy: _policy,
         recipes: RECIPES
     }),
 
@@ -3190,8 +3291,7 @@ window.KitchenAPI = {
             return { success: false, error: 'No path found' };
         }
 
-        chef.path = path;
-        chef.targetStation = stationInfo;
+        assignChefPath(chef, path, stationInfo);
 
         return { success: true };
     },
@@ -3217,6 +3317,7 @@ window.KitchenAPI = {
     onOrderFailed: callback => EventBus.on('orderFailed', callback),
     onGameOver: callback => EventBus.on('gameOver', callback),
     onPhaseChanged: callback => EventBus.on('phaseChanged', callback),
+    onRushBurst: callback => EventBus.on('rushBurst', callback),
 
     selectChef: (chefId) => {
         GameState.selectedChef = chefId;
@@ -3224,6 +3325,13 @@ window.KitchenAPI = {
 
     run: (fn) => { _agentFn = fn; registerAgent(); },
     stop: () => { _agentFn = null; registerAgent(); },
+    plan: (fn, opts = {}) => {
+        _plannerFn = fn;
+        _plannerEveryMs = Math.max(100, Math.min(60000, opts.everyMs || 1000));
+        registerPlanner();
+    },
+    unplan: () => { _plannerFn = null; _policy = null; registerPlanner(); },
+    getPolicy: () => _policy,
     clearListeners: () => EventBus.clear(),
 
     start: startGame,
@@ -3297,108 +3405,3 @@ Minimal steak agent (bin → stove → plating → reception):
 Full docs: open docs.html
 `);
 
-// =============================================
-// RECIPE DECK — scroll-driven stacked-card reveal
-// =============================================
-(function initRecipeDeckScroll() {
-    function start() {
-        const grid = document.querySelector('.recipe-grid');
-        if (!grid) return;
-        const cards = Array.from(grid.querySelectorAll('.recipe-card'));
-        if (!cards.length) return;
-
-        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-        // Per-card resting pose inside the pile (rotation in deg, depth scale).
-        const ROTS = [-7, 4, -3, 8, -5, 3, -6];
-        const STAGGER = 0.06;          // fraction of progress each card lags behind
-        const SPAN = 1 - STAGGER * (cards.length - 1);
-
-        let deltas = [];               // {dx, dy} natural-position -> stack anchor
-        let enabled = false;
-        let ticking = false;
-
-        const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-        const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
-
-        function spreadPose() {
-            cards.forEach(card => {
-                card.style.setProperty('--sx', '0px');
-                card.style.setProperty('--sy', '0px');
-                card.style.setProperty('--sr', '0deg');
-                card.style.setProperty('--ss', '1');
-                card.style.zIndex = '';
-            });
-        }
-
-        function measure() {
-            // Disable the effect on narrow viewports or with reduced motion.
-            if (reduceMotion || window.innerWidth < 1100) {
-                enabled = false;
-                spreadPose();
-                return;
-            }
-            enabled = true;
-            // Neutralize any active collapse transform first — getBoundingClientRect
-            // includes transforms, so we must read the true layout positions.
-            spreadPose();
-            // Anchor the pile on the first row so it sits in the upper part of the
-            // panel and is visible as the section scrolls into view.
-            const anchorEl = grid.querySelector('.recipe-row--4') || grid;
-            const aRect = anchorEl.getBoundingClientRect();
-            const anchorX = aRect.left + aRect.width / 2;
-            const anchorY = aRect.top + aRect.height / 2;
-            deltas = cards.map(card => {
-                const r = card.getBoundingClientRect();
-                return {
-                    dx: anchorX - (r.left + r.width / 2),
-                    dy: anchorY - (r.top + r.height / 2)
-                };
-            });
-        }
-
-        function apply() {
-            ticking = false;
-            if (!enabled) return;
-            const vh = window.innerHeight;
-            const gridTop = grid.getBoundingClientRect().top;
-            const startAt = vh * 0.83;   // begin spreading
-            const endAt = vh * 0.41;     // fully spread
-            const p = clamp((startAt - gridTop) / (startAt - endAt), 0, 1);
-
-            cards.forEach((card, i) => {
-                // staggered per-card progress so cards deal out in sequence
-                const pc = easeOutCubic(clamp((p - i * STAGGER) / SPAN, 0, 1));
-                const collapse = 1 - pc;
-                const d = deltas[i] || { dx: 0, dy: 0 };
-                card.style.setProperty('--sx', (d.dx * collapse).toFixed(2) + 'px');
-                card.style.setProperty('--sy', (d.dy * collapse).toFixed(2) + 'px');
-                card.style.setProperty('--sr', (ROTS[i % ROTS.length] * collapse).toFixed(2) + 'deg');
-                card.style.setProperty('--ss', (1 - 0.03 * collapse).toFixed(3));
-                card.style.zIndex = collapse > 0.001 ? String(i + 1) : '';
-            });
-        }
-
-        function onScroll() {
-            if (ticking) return;
-            ticking = true;
-            requestAnimationFrame(apply);
-        }
-
-        function refresh() {
-            measure();
-            apply();
-        }
-
-        window.addEventListener('scroll', onScroll, { passive: true });
-        window.addEventListener('resize', refresh);
-        window.addEventListener('load', refresh);
-        refresh();
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', start);
-    } else {
-        start();
-    }
-})();
