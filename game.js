@@ -2478,9 +2478,12 @@ function applySignedOutUI() {
 }
 
 function persistPendingRunForAuth() {
-    if (!_runToken || !GameState.gameOver) return;
+    if (!_runToken || !GameState.gameOver) {
+        console.warn('[ht6] skip persist pending run', { hasToken: !!_runToken, gameOver: GameState.gameOver });
+        return;
+    }
     try {
-        sessionStorage.setItem(PENDING_RUN_KEY, JSON.stringify({
+        localStorage.setItem(PENDING_RUN_KEY, JSON.stringify({
             runToken: _runToken,
             stats: {
                 score: GameState.score,
@@ -2500,10 +2503,14 @@ function persistPendingRunForAuth() {
 function restorePendingRunIfAny() {
     let saved;
     try {
-        const raw = sessionStorage.getItem(PENDING_RUN_KEY);
-        if (!raw) return false;
+        // Prefer localStorage (survives OAuth roundtrip reliably); fall back to
+        // sessionStorage for users whose pending state was saved before this fix.
+        const raw = localStorage.getItem(PENDING_RUN_KEY) || sessionStorage.getItem(PENDING_RUN_KEY);
+        if (!raw) { console.info('[ht6] no pending run to restore'); return false; }
         saved = JSON.parse(raw);
+        localStorage.removeItem(PENDING_RUN_KEY);
         sessionStorage.removeItem(PENDING_RUN_KEY);
+        console.info('[ht6] restored pending run', { score: saved?.stats?.score });
     } catch (_) {
         return false;
     }
