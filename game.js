@@ -2783,8 +2783,9 @@ async function _submitVerifiedScoreImpl() {
                 unknown_token: 'Run not recognized. Start a new game.',
                 bad_signature: 'Run token invalid.',
                 bad_email: 'Please enter a valid email address.',
-            })[reason] || 'Submission rejected.';
+            })[reason] || `Submission rejected (${reason}).`;
             statusEl.textContent = msg;
+            console.error('[ht6] submit-score rejected', { status: res.status, data });
         } else if (data?.kept_existing) {
             statusEl.textContent = `Submitted — your previous best (${data.best.toLocaleString()}) still stands.`;
             // Token is one-shot; clear it.
@@ -3083,7 +3084,7 @@ document.addEventListener('keydown', (e) => {
     if (e.key === ' ' && GameState.running) {
         togglePause();
     }
-    if (e.key.toLowerCase() === 'b') {
+    if (typeof e.key === 'string' && e.key.toLowerCase() === 'b') {
         activateBoost();
     }
 });
