@@ -894,6 +894,7 @@ function initChefs() {
             commitmentStall: 0
         });
     });
+    rebuildReservations();
 }
 
 // =============================================
@@ -987,6 +988,50 @@ function spawnOrder() {
         components: order.recipe.components.map(c => ({ ingredient: c.ingredient, state: c.state }))
     });
     return true;
+}
+
+// =============================================
+// TILE RESERVATIONS
+// =============================================
+// Single source of truth for "which chef occupies which tile." Every chef holds
+// exactly one tile at all times. A step is only legal if it can atomically move
+// the reservation from chef.x,chef.y to the next tile.
+const tileReservations = new Map();
+
+function tileKey(x, y) {
+    return `${x},${y}`;
+}
+
+function rebuildReservations() {
+    tileReservations.clear();
+    for (const chef of chefs) {
+        tileReservations.set(tileKey(chef.x, chef.y), chef);
+    }
+}
+
+function isTileReserved(x, y, excludeChef) {
+    const occupant = tileReservations.get(tileKey(x, y));
+    return occupant !== undefined && occupant !== excludeChef;
+}
+
+function reserveStep(chef, nextX, nextY) {
+    const targetKey = tileKey(nextX, nextY);
+    const occupant = tileReservations.get(targetKey);
+    if (occupant !== undefined && occupant !== chef) return false;
+    tileReservations.delete(tileKey(chef.x, chef.y));
+    tileReservations.set(targetKey, chef);
+    return true;
+}
+
+function buildChefAvoidSet(excludeChef, exceptTile) {
+    const set = new Set();
+    const exceptKey = exceptTile ? tileKey(exceptTile.x, exceptTile.y) : null;
+    for (const [key, chef] of tileReservations) {
+        if (chef === excludeChef) continue;
+        if (exceptKey !== null && key === exceptKey) continue;
+        set.add(key);
+    }
+    return set;
 }
 
 // =============================================
@@ -1533,6 +1578,7 @@ function update(dt) {
     recomputeUpcomingEtas();
     
     // Update chefs
+    rebuildReservations();
     for (const chef of chefs) {
         updateChef(chef, dt);
     }
@@ -1618,33 +1664,23 @@ function updateChef(chef, dt) {
     if (chef.path.length > 0 && chef.moveTimer >= moveDelay) {
         const next = chef.path[0];
 
-        // Check if another chef is at the target
-        const blocked = chefs.some(c => c !== chef && c.x === next.x && c.y === next.y);
-
-        const step = () => {
+        if (reserveStep(chef, next.x, next.y)) {
             chef.x = next.x;
             chef.y = next.y;
             chef.path.shift();
             chef.blockedTicks = 0;
 
-            // Check if reached destination
             if (chef.path.length === 0 && chef.targetStation) {
                 interactWithStation(chef, chef.targetStation);
                 chef.targetStation = null;
             }
-        };
-
-        if (!blocked) {
-            step();
         } else {
             chef.blockedTicks++;
             // Stuck on another chef: try to route around it. Never force through,
             // since two chefs may not share a tile.
             if (chef.blockedTicks >= 3) {
                 const dest = chef.path[chef.path.length - 1];
-                const avoid = new Set(
-                    chefs.filter(c => c !== chef).map(c => `${c.x},${c.y}`)
-                );
+                const avoid = buildChefAvoidSet(chef, dest);
                 const detour = findPath(chef.x, chef.y, dest.x, dest.y, avoid);
                 if (detour.length > 0) {
                     chef.path = detour;
@@ -2575,12 +2611,18 @@ function _escapeHTML(s) {
     return String(s).replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function lbRowHTML(entry, i) {
+const LB_RANK_LABELS = ['1st', '2nd', '3rd'];
+
+function lbRowHTML(entry, i, maxScore = 0) {
     const score = Number(entry && entry.score) || 0;
     const rankClass = i < 3 ? ` lb-rank-${i + 1}` : '';
-    return `<div class="lb-score-row${rankClass}">` +
+    const fill = maxScore > 0 ? Math.max(4, Math.min(100, (score / maxScore) * 100)) : 0;
+    const rankLabel = i < 3 ? LB_RANK_LABELS[i] : `#${i + 1}`;
+    return `<div class="lb-score-row${rankClass}" style="--lb-fill:${fill.toFixed(1)}%">` +
+        `<span class="lb-rank-fill" aria-hidden="true"></span>` +
         `<span class="lb-medal">${i + 1}</span>` +
-        `<span class="lb-score-num">${score.toLocaleString()}</span>` +
+        `<span class="lb-rank-label">${rankLabel}</span>` +
+        `<span class="lb-score-num">${score.toLocaleString()}<span class="lb-score-suffix">pts</span></span>` +
         `</div>`;
 }
 
@@ -2592,7 +2634,8 @@ async function renderSideLeaderboard() {
         mount.innerHTML = '<div class="orders-empty">No scores yet.</div>';
         return;
     }
-    mount.innerHTML = scores.map((e, i) => lbRowHTML(e, i)).join('');
+    const maxScore = Math.max(1, ...scores.map(s => Number(s && s.score) || 0));
+    mount.innerHTML = scores.map((e, i) => lbRowHTML(e, i, maxScore)).join('');
 }
 
 async function fetchGlobalLeaderboard() {
@@ -2615,7 +2658,8 @@ async function renderLeaderboard() {
 
     const global = await fetchGlobalLeaderboard();
     if (global && global.length > 0) {
-        mount.innerHTML = global.map((e, i) => lbRowHTML(e, i)).join('');
+        const maxScore = Math.max(1, ...global.map(s => Number(s && s.score) || 0));
+        mount.innerHTML = global.map((e, i) => lbRowHTML(e, i, maxScore)).join('');
         return;
     }
 
@@ -2624,7 +2668,8 @@ async function renderLeaderboard() {
         mount.innerHTML = '<div class="orders-empty">No verified runs yet.</div>';
         return;
     }
-    mount.innerHTML = entries.map((e, i) => lbRowHTML(e, i)).join('');
+    const maxScore = Math.max(1, ...entries.map(s => Number(s && s.score) || 0));
+    mount.innerHTML = entries.map((e, i) => lbRowHTML(e, i, maxScore)).join('');
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -2842,9 +2887,9 @@ function updateUI() {
             document.getElementById('boost-info').textContent = 'Ready';
         }
     } else {
-        document.getElementById('chef-info').textContent = 'Click a chef to select';
-        document.getElementById('item-info').textContent = '-';
-        document.getElementById('boost-info').textContent = '-';
+        document.getElementById('chef-info').textContent = 'None';
+        document.getElementById('item-info').textContent = '—';
+        document.getElementById('boost-info').textContent = '—';
     }
 
     const chefChrome = document.querySelector('.ui-chef-compact');
@@ -2998,7 +3043,7 @@ canvas.addEventListener('click', (e) => {
                     chef.targetStation = null;
                     interactWithStation(chef, stationInfo);
                 } else {
-                    const path = findPath(chef.x, chef.y, adjacent.x, adjacent.y);
+                    const path = findPath(chef.x, chef.y, adjacent.x, adjacent.y, buildChefAvoidSet(chef, adjacent));
                     if (path.length > 0) {
                         assignChefPath(chef, path, stationInfo);
                     }
@@ -3006,7 +3051,7 @@ canvas.addEventListener('click', (e) => {
             }
         } else if (isWalkable(x, y)) {
             // Just move to floor tile
-            const path = findPath(chef.x, chef.y, x, y);
+            const path = findPath(chef.x, chef.y, x, y, buildChefAvoidSet(chef, { x, y }));
             chef.path = path;
             chef.targetStation = null;
         }
@@ -3322,7 +3367,7 @@ window.KitchenAPI = {
             return { success: true };
         }
 
-        const path = findPath(chef.x, chef.y, adjacent.x, adjacent.y);
+        const path = findPath(chef.x, chef.y, adjacent.x, adjacent.y, buildChefAvoidSet(chef, adjacent));
         if (path.length === 0) {
             return { success: false, error: 'No path found' };
         }

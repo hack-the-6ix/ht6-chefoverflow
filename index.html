@@ -58,42 +58,53 @@
 
             <div id="endurance-banner" class="endurance-banner">ENDURANCE MODE: Every second counts!</div>
 
+            <h4 class="ui-eyebrow">Game stats</h4>
             <div class="ui-mid-row">
-                <div class="ui-compact-line" id="difficulty-display"><span id="difficulty">1.0x</span></div>
-                <div id="streak-display" class="streak-row">
-                    Streak <span id="streak">0</span>
-                    <span id="streak-mult" class="streak-mult" aria-hidden="true"></span>
+                <div class="ui-stat-line" id="difficulty-display">
+                    <span class="ui-stat-name">Difficulty</span>
+                    <span id="difficulty" class="ui-stat-value">1.0x</span>
                 </div>
-                <div id="rush-display" class="status-pill rush-pill"><span class="rush-label">Rush</span> <span id="rush">Idle</span></div>
+                <div id="streak-display" class="ui-stat-line streak-row">
+                    <span class="ui-stat-name">Streak</span>
+                    <span class="ui-stat-value"><span id="streak">0</span><span id="streak-mult" class="streak-mult" aria-hidden="true"></span></span>
+                </div>
+                <div id="rush-display" class="ui-stat-line rush-pill">
+                    <span class="ui-stat-name rush-label">Rush</span>
+                    <span id="rush" class="ui-stat-value">Idle</span>
+                </div>
             </div>
 
-            <hr class="ui-divider">
-
+            <h4 class="ui-eyebrow">Selected chef</h4>
             <div class="ui-chef-compact">
-                <div id="selected-chef"><span id="chef-info">Click a chef (1–5)</span></div>
-                <div id="held-item">Hold: <span id="item-info">-</span></div>
-                <div id="boost-status">Boost: <span id="boost-info">-</span></div>
+                <div id="selected-chef" class="ui-stat-line">
+                    <span class="ui-stat-name">Chef</span>
+                    <span id="chef-info" class="ui-stat-value">None</span>
+                </div>
+                <div id="held-item" class="ui-stat-line">
+                    <span class="ui-stat-name">Hold</span>
+                    <span id="item-info" class="ui-stat-value">—</span>
+                </div>
+                <div id="boost-status" class="ui-stat-line">
+                    <span class="ui-stat-name">Boost</span>
+                    <span id="boost-info" class="ui-stat-value">—</span>
+                </div>
             </div>
 
             <details class="controls-details">
-                <summary class="controls-summary">Controls <span class="controls-chevron" aria-hidden="true">▸</span></summary>
+                <summary class="controls-summary"><span>Keyboard controls</span><span class="controls-chevron" aria-hidden="true">›</span></summary>
                 <div class="controls-help">
-                    <div>Click chef to select</div>
-                    <div>Click station to send</div>
-                    <div>Keys 1–5 select chefs</div>
-                    <div>Space to pause</div>
-                    <div>Esc to deselect</div>
-                    <div>B to boost selected chef</div>
+                    <div><kbd>1</kbd>–<kbd>5</kbd> Select chef</div>
+                    <div><kbd>Space</kbd> Pause</div>
+                    <div><kbd>Esc</kbd> Deselect</div>
+                    <div><kbd>B</kbd> Boost selected</div>
                 </div>
             </details>
-
-            <hr class="ui-divider">
 
             <div class="game-actions">
                 <button type="button" id="start-btn" class="btn-start">Start game</button>
                 <button type="button" id="pause-btn" class="btn-pause" disabled>Pause</button>
             </div>
-            <p class="desktop-recommended-notice">Chef Overflow uses keyboard controls (1–5, Space, Esc, B). Mobile play is not supported.</p>
+            <p class="desktop-recommended-notice">Desktop only. Mobile play is not supported.</p>
         </aside>
 
         <div id="main-game">
