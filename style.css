@@ -1145,115 +1145,89 @@ body.game-running #start-btn {
     flex: 1;
     min-width: 0;
     padding: var(--space-section);
-    background: linear-gradient(165deg, rgba(44, 28, 122, 0.78) 0%, rgba(30, 16, 88, 0.85) 100%);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    background: var(--chrome-panel);
     border-radius: var(--radius-2xl);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-subtle);
+}
+
+.recipes-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    margin-bottom: 28px;
+}
+
+.recipes-eyebrow {
+    font-size: var(--text-tiny);
+    font-weight: var(--font-weight-extra);
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    color: var(--ht6-gold);
+    margin-bottom: 8px;
 }
 
 #recipes-panel h3 {
     font-family: var(--font-heading);
     font-weight: var(--font-weight-extra);
     color: var(--text-highlight);
-    margin-bottom: var(--space-section);
-    font-size: var(--text-h3);
-    text-align: center;
-    letter-spacing: 0.02em;
-    position: relative;
-    padding-bottom: 14px;
+    margin: 0;
+    font-size: 1.9rem;
+    line-height: 1.1;
+    letter-spacing: -0.015em;
 }
 
-#recipes-panel h3::after {
-    content: '';
-    position: absolute;
-    left: 50%;
-    bottom: 0;
-    transform: translateX(-50%);
-    width: 88px;
-    height: 3px;
-    border-radius: 2px;
-    background: linear-gradient(90deg, transparent, var(--ht6-gold), var(--ht6-amber), transparent);
-    box-shadow: 0 0 14px rgba(232, 184, 75, 0.55);
+.recipes-subtitle {
+    margin: 8px 0 0;
+    font-size: var(--text-small);
+    color: var(--text-secondary);
 }
 
 .recipe-grid {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: var(--space-default);
+    gap: 26px;
     width: 100%;
 }
 
 .recipe-row {
-    display: grid;
-    gap: var(--space-default);
-    width: 100%;
-}
-
-.recipe-row--4 {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
+    justify-content: center;
+    align-items: stretch;
+    padding: 14px 0;
 }
 
 .recipe-row--3 {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    width: calc((100% - 48px) * 3 / 4 + 32px);
+    max-width: 76%;
     margin-inline: auto;
-}
-
-@media (max-width: 1100px) {
-    .recipe-row--4 {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .recipe-row--3 {
-        width: 100%;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-
-@media (max-width: 600px) {
-    .recipe-row--4,
-    .recipe-row--3 {
-        grid-template-columns: 1fr;
-    }
 }
 
 .recipe-card {
     --diff: var(--ht6-teal);
+    --sx: 0px;
+    --sy: 0px;
+    --sr: 0deg;
+    --ss: 1;
+    flex: 1 1 0;
+    min-width: 0;
+    margin-left: -34px;
     position: relative;
-    background: linear-gradient(165deg, rgba(61, 42, 144, 0.62) 0%, rgba(40, 26, 112, 0.72) 100%);
-    padding: 18px 16px 15px;
-    border-radius: var(--radius-2xl);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    min-height: 100%;
+    background: #241753;
+    padding: 18px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
     display: flex;
     flex-direction: column;
-    overflow: hidden;
-    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    box-shadow:
+        0 10px 26px rgba(0, 0, 0, 0.45),
+        0 0 22px color-mix(in srgb, var(--diff) 13%, transparent);
+    transform: translate(var(--sx), var(--sy)) rotate(var(--sr)) scale(var(--ss));
+    transition: translate 0.2s ease, scale 0.2s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+    will-change: transform;
 }
 
-.recipe-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: linear-gradient(90deg, var(--diff), color-mix(in srgb, var(--diff) 18%, transparent));
-}
-
-.recipe-card::after {
-    content: '';
-    position: absolute;
-    top: -44px;
-    right: -44px;
-    width: 120px;
-    height: 120px;
-    border-radius: 50%;
-    background: radial-gradient(circle, color-mix(in srgb, var(--diff) 24%, transparent) 0%, transparent 70%);
-    pointer-events: none;
+.recipe-card:first-child {
+    margin-left: 0;
 }
 
 .recipe-card[data-difficulty="1"] { --diff: #44D9B8; }
@@ -1262,82 +1236,91 @@ body.game-running #start-btn {
 .recipe-card[data-difficulty="4"] { --diff: #E06050; }
 
 .recipe-card:hover {
-    transform: translateY(-3px);
-    border-color: color-mix(in srgb, var(--diff) 45%, transparent);
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45),
-                0 0 26px color-mix(in srgb, var(--diff) 22%, transparent);
+    z-index: 20;
+    translate: 0 -12px;
+    scale: 1.035;
+    border-color: color-mix(in srgb, var(--diff) 55%, transparent);
+    box-shadow:
+        0 26px 52px rgba(0, 0, 0, 0.6),
+        0 0 44px color-mix(in srgb, var(--diff) 34%, transparent);
+}
+
+@media (max-width: 1100px) {
+    .recipe-row,
+    .recipe-row--3 {
+        flex-wrap: wrap;
+        max-width: 100%;
+    }
+
+    .recipe-card {
+        flex: 1 1 240px;
+        margin-left: 0;
+    }
 }
 
 .recipe-card-head {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 14px;
-    position: relative;
+    gap: 10px;
+    margin-bottom: 16px;
 }
 
 .recipe-title-group {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 11px;
     min-width: 0;
 }
 
 .recipe-dish-icon {
-    width: 36px;
-    height: 36px;
-    border-radius: var(--radius-md);
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
     flex-shrink: 0;
-    object-fit: cover;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1.5px solid color-mix(in srgb, var(--diff) 50%, transparent);
-    box-shadow: 0 0 12px color-mix(in srgb, var(--diff) 28%, transparent);
+    object-fit: contain;
+    background: rgba(0, 0, 0, 0.28);
 }
 
 .recipe-title {
-    font-size: var(--text-lg);
+    font-size: var(--text-body);
     font-weight: var(--font-weight-extra);
     font-family: var(--font-heading);
     color: var(--text-highlight);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.2;
     letter-spacing: -0.01em;
 }
 
 .recipe-difficulty {
-    font-size: var(--text-tiny);
+    font-size: 10px;
     font-weight: var(--font-weight-extra);
-    font-family: var(--font-heading);
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.07em;
     padding: 4px 9px;
     border-radius: var(--radius-pill);
-    background: color-mix(in srgb, var(--diff) 18%, transparent);
+    background: color-mix(in srgb, var(--diff) 16%, transparent);
     color: var(--diff);
-    border: 1px solid color-mix(in srgb, var(--diff) 45%, transparent);
-    box-shadow: 0 0 14px color-mix(in srgb, var(--diff) 25%, transparent);
     flex-shrink: 0;
+    align-self: flex-start;
 }
 
 .recipe-steps {
     list-style: none;
     counter-reset: step;
-    font-size: var(--text-small);
-    color: var(--text-primary);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
     margin: 0;
     padding-left: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 7px;
     flex: 1;
 }
 
 .recipe-steps li {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 5px;
     line-height: 1.4;
     flex-wrap: wrap;
 }
@@ -1345,14 +1328,13 @@ body.game-running #start-btn {
 .recipe-steps li::before {
     counter-increment: step;
     content: counter(step);
-    width: 19px;
-    height: 19px;
+    width: 17px;
+    height: 17px;
     border-radius: 50%;
-    background: color-mix(in srgb, var(--diff) 20%, transparent);
-    color: var(--diff);
-    border: 1px solid color-mix(in srgb, var(--diff) 42%, transparent);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
     font-family: var(--font-heading);
-    font-size: var(--text-tiny);
+    font-size: 10px;
     font-weight: var(--font-weight-extra);
     display: flex;
     align-items: center;
@@ -1366,14 +1348,12 @@ body.game-running #start-btn {
 }
 
 .step-icon {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     border-radius: var(--radius-xs);
-    object-fit: cover;
+    object-fit: contain;
     flex-shrink: 0;
     vertical-align: middle;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    background: rgba(0, 0, 0, 0.25);
 }
 
 .tips {

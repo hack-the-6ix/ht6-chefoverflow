@@ -3296,3 +3296,109 @@ Minimal steak agent (bin → stove → plating → reception):
 
 Full docs: open docs.html
 `);
+
+// =============================================
+// RECIPE DECK — scroll-driven stacked-card reveal
+// =============================================
+(function initRecipeDeckScroll() {
+    function start() {
+        const grid = document.querySelector('.recipe-grid');
+        if (!grid) return;
+        const cards = Array.from(grid.querySelectorAll('.recipe-card'));
+        if (!cards.length) return;
+
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        // Per-card resting pose inside the pile (rotation in deg, depth scale).
+        const ROTS = [-7, 4, -3, 8, -5, 3, -6];
+        const STAGGER = 0.06;          // fraction of progress each card lags behind
+        const SPAN = 1 - STAGGER * (cards.length - 1);
+
+        let deltas = [];               // {dx, dy} natural-position -> stack anchor
+        let enabled = false;
+        let ticking = false;
+
+        const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+        const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+
+        function spreadPose() {
+            cards.forEach(card => {
+                card.style.setProperty('--sx', '0px');
+                card.style.setProperty('--sy', '0px');
+                card.style.setProperty('--sr', '0deg');
+                card.style.setProperty('--ss', '1');
+                card.style.zIndex = '';
+            });
+        }
+
+        function measure() {
+            // Disable the effect on narrow viewports or with reduced motion.
+            if (reduceMotion || window.innerWidth < 1100) {
+                enabled = false;
+                spreadPose();
+                return;
+            }
+            enabled = true;
+            // Neutralize any active collapse transform first — getBoundingClientRect
+            // includes transforms, so we must read the true layout positions.
+            spreadPose();
+            // Anchor the pile on the first row so it sits in the upper part of the
+            // panel and is visible as the section scrolls into view.
+            const anchorEl = grid.querySelector('.recipe-row--4') || grid;
+            const aRect = anchorEl.getBoundingClientRect();
+            const anchorX = aRect.left + aRect.width / 2;
+            const anchorY = aRect.top + aRect.height / 2;
+            deltas = cards.map(card => {
+                const r = card.getBoundingClientRect();
+                return {
+                    dx: anchorX - (r.left + r.width / 2),
+                    dy: anchorY - (r.top + r.height / 2)
+                };
+            });
+        }
+
+        function apply() {
+            ticking = false;
+            if (!enabled) return;
+            const vh = window.innerHeight;
+            const gridTop = grid.getBoundingClientRect().top;
+            const startAt = vh * 0.83;   // begin spreading
+            const endAt = vh * 0.41;     // fully spread
+            const p = clamp((startAt - gridTop) / (startAt - endAt), 0, 1);
+
+            cards.forEach((card, i) => {
+                // staggered per-card progress so cards deal out in sequence
+                const pc = easeOutCubic(clamp((p - i * STAGGER) / SPAN, 0, 1));
+                const collapse = 1 - pc;
+                const d = deltas[i] || { dx: 0, dy: 0 };
+                card.style.setProperty('--sx', (d.dx * collapse).toFixed(2) + 'px');
+                card.style.setProperty('--sy', (d.dy * collapse).toFixed(2) + 'px');
+                card.style.setProperty('--sr', (ROTS[i % ROTS.length] * collapse).toFixed(2) + 'deg');
+                card.style.setProperty('--ss', (1 - 0.03 * collapse).toFixed(3));
+                card.style.zIndex = collapse > 0.001 ? String(i + 1) : '';
+            });
+        }
+
+        function onScroll() {
+            if (ticking) return;
+            ticking = true;
+            requestAnimationFrame(apply);
+        }
+
+        function refresh() {
+            measure();
+            apply();
+        }
+
+        window.addEventListener('scroll', onScroll, { passive: true });
+        window.addEventListener('resize', refresh);
+        window.addEventListener('load', refresh);
+        refresh();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+    } else {
+        start();
+    }
+})();

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chef Overflow</title>
-    <link rel="stylesheet" href="style.css?v=auth-ui-1">
+    <link rel="stylesheet" href="style.css?v=recipe-ui-9">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -105,7 +105,11 @@
         <div id="side-lb-list"><div class="orders-empty">Loading…</div></div>
     </aside>
     <div id="recipes-panel">
-        <h3>How to make each dish</h3>
+        <div class="recipes-header">
+            <span class="recipes-eyebrow">Kitchen Manual</span>
+            <h3>Recipe Guide</h3>
+            <p class="recipes-subtitle">Every dish, step by step — hover a card to bring it forward.</p>
+        </div>
         <div class="recipe-grid">
             <div class="recipe-row recipe-row--4">
 
@@ -228,11 +232,6 @@
             </div>
 
             </div>
-        </div>
-        <div class="tips">
-            <b>Tips:</b> Stove progress bar turns <span class="tip-ok">green</span> when ready.
-            Pick up before it turns <span class="tip-bad">red</span> (burnt)!
-            Items on plating area combine into a dish.
         </div>
     </div>
     </div>
