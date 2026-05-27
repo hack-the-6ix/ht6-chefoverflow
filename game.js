@@ -2770,22 +2770,52 @@ async function _submitVerifiedScoreImpl() {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
             const reason = data?.error || `http_${res.status}`;
-            const msg = ({
+            const ERROR_MESSAGES = {
+                // HT6 session
                 ht6_unauthenticated: 'HT6 session expired. Sign in again.',
                 ht6_unreachable: 'HT6 sign-in service is unreachable. Try again in a moment.',
-                rate_limited: 'Please wait a bit before submitting again.',
+                // Run-token lifecycle
+                token_used: 'This run has already been submitted.',
+                token_expired: 'Run expired. Start a new game to submit.',
+                too_fast: 'Run too short to submit. Play for at least 10 seconds.',
+                unknown_token: 'Run not recognized. Refresh and play a fresh game.',
+                bad_signature: 'Run token invalid. Refresh and play a fresh game.',
+                // Plausibility
                 implausible_score: 'Run rejected: score outside plausible range.',
                 implausible_delivered: 'Run rejected: delivery count not plausible.',
                 implausible_streak: 'Run rejected: streak not plausible.',
-                token_used: 'This run has already been submitted.',
-                token_expired: 'Run expired. Start a new game to submit.',
-                too_fast: 'Run too short to submit.',
-                unknown_token: 'Run not recognized. Start a new game.',
-                bad_signature: 'Run token invalid.',
+                // Schema validation (should never fire from the official client)
+                bad_json: 'Submission body was malformed. Refresh the page.',
+                payload_too_large: 'Submission body was too large. Refresh the page.',
+                bad_run_id: 'Internal: run_id missing or invalid. Refresh and play a fresh game.',
+                bad_token: 'Internal: run token missing or malformed. Refresh and play a fresh game.',
+                bad_grade: 'Internal: invalid grade letter.',
+                bad_score: 'Internal: invalid score value.',
+                bad_streak: 'Internal: invalid streak value.',
+                bad_delivered: 'Internal: invalid delivered count.',
+                bad_time: 'Internal: invalid run time.',
                 bad_email: 'Please enter a valid email address.',
-            })[reason] || `Submission rejected (${reason}).`;
-            statusEl.textContent = msg;
-            console.error('[ht6] submit-score rejected', { status: res.status, data });
+                // Rate / capacity
+                rate_limited: 'Please wait 30 seconds before submitting again.',
+                // Server config / deploy issues
+                server_misconfigured: 'Server not fully configured. Visit /api/health.',
+                rpc_missing: 'Server not fully deployed: submit_run migration missing. Visit /api/health.',
+                table_missing: 'Server not fully deployed: leaderboard table missing. Visit /api/health.',
+                column_missing: 'Server schema mismatch: a leaderboard column is missing. Visit /api/health.',
+                duplicate: 'Server conflict on submit. Try again.',
+                write_failed: 'Server write failed. Visit /api/health.',
+                submit_failed: 'Submission rejected by server logic.',
+            };
+            const friendly = ERROR_MESSAGES[reason];
+            // For unmapped reasons, surface the raw payload so we can debug
+            // without grepping server logs.
+            const fallback = `Submission rejected: ${reason}` +
+                (data?.pg_code ? ` [pg ${data.pg_code}]` : '') +
+                (data?.detail ? `\n${String(data.detail).slice(0, 200)}` : '') +
+                ` (status ${res.status}). Check the browser console for full response.`;
+            statusEl.textContent = friendly || fallback;
+            statusEl.dataset.errorCode = reason;
+            console.error('[ht6] submit-score rejected', { status: res.status, reason, data });
         } else if (data?.kept_existing) {
             statusEl.textContent = `Submitted — your previous best (${data.best.toLocaleString()}) still stands.`;
             // Token is one-shot; clear it.

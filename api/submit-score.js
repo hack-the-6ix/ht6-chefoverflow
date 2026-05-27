@@ -28,6 +28,21 @@ function isInt(n, min, max) {
     return typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max;
 }
 
+// Compact, structured logger so the reason for every rejection lands
+// next to the request in Vercel function logs.
+function logReject(reason, ctx) {
+    try {
+        console.warn('[submit-score] rejected', JSON.stringify({ reason, ...ctx }));
+    } catch (_) {
+        console.warn('[submit-score] rejected', reason);
+    }
+}
+
+function rejectAndLog(res, status, reason, ctx) {
+    logReject(reason, ctx);
+    return json(res, status, { error: reason, ...(ctx?.detail ? { detail: ctx.detail } : {}) });
+}
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
 
@@ -37,6 +52,7 @@ export default async function handler(req, res) {
         const code = auth.status === 504 ? 'ht6_unreachable' :
                      auth.status === 502 ? 'ht6_unreachable' :
                                            'ht6_unauthenticated';
+        logReject(code, { upstream_status: auth.status });
         return json(res, auth.status === 401 ? 401 : auth.status, { error: code });
     }
 
@@ -44,48 +60,63 @@ export default async function handler(req, res) {
     let body;
     try { body = await readJsonBody(req); }
     catch (e) {
-        return json(res, 400, { error: e?.message === 'payload_too_large' ? 'payload_too_large' : 'bad_json' });
+        const reason = e?.message === 'payload_too_large' ? 'payload_too_large' : 'bad_json';
+        return rejectAndLog(res, 400, reason);
     }
 
     const { run_id, token, email: clientEmail, score, grade, streak, delivered, time_secs } = body;
 
-    if (typeof run_id !== 'string' || run_id.length < 10 || run_id.length > 64) return json(res, 400, { error: 'bad_run_id' });
-    if (typeof token !== 'string' || token.length < 20 || token.length > 200) return json(res, 400, { error: 'bad_token' });
-    if (typeof grade !== 'string' || !VALID_GRADES.has(grade)) return json(res, 400, { error: 'bad_grade' });
-    if (!isInt(score, 0, 10_000_000)) return json(res, 400, { error: 'bad_score' });
-    if (!isInt(streak, 0, 10_000)) return json(res, 400, { error: 'bad_streak' });
-    if (!isInt(delivered, 0, 10_000)) return json(res, 400, { error: 'bad_delivered' });
-    if (!isInt(time_secs, MIN_RUN_SECONDS, MAX_RUN_SECONDS)) return json(res, 400, { error: 'bad_time' });
+    if (typeof run_id !== 'string' || run_id.length < 10 || run_id.length > 64)
+        return rejectAndLog(res, 400, 'bad_run_id', { run_id_type: typeof run_id, run_id_len: typeof run_id === 'string' ? run_id.length : null });
+    if (typeof token !== 'string' || token.length < 20 || token.length > 200)
+        return rejectAndLog(res, 400, 'bad_token', { token_type: typeof token, token_len: typeof token === 'string' ? token.length : null });
+    if (typeof grade !== 'string' || !VALID_GRADES.has(grade))
+        return rejectAndLog(res, 400, 'bad_grade', { grade });
+    if (!isInt(score, 0, 10_000_000))
+        return rejectAndLog(res, 400, 'bad_score', { score });
+    if (!isInt(streak, 0, 10_000))
+        return rejectAndLog(res, 400, 'bad_streak', { streak });
+    if (!isInt(delivered, 0, 10_000))
+        return rejectAndLog(res, 400, 'bad_delivered', { delivered });
+    if (!isInt(time_secs, MIN_RUN_SECONDS, MAX_RUN_SECONDS))
+        return rejectAndLog(res, 400, 'bad_time', { time_secs });
 
     // Trusted email > client-typed.
     const rawEmail = (auth.user && auth.user.email) || clientEmail;
     if (typeof rawEmail !== 'string' || rawEmail.length > 254 || !EMAIL_RE.test(rawEmail)) {
-        return json(res, 400, { error: 'bad_email' });
+        return rejectAndLog(res, 400, 'bad_email', { has_trusted: !!auth.user?.email });
     }
     const email = rawEmail.toLowerCase();
 
     // 3) Plausibility.
-    if (score > time_secs * MAX_SCORE_PER_SEC + MAX_BURST) return json(res, 400, { error: 'implausible_score' });
-    if (delivered > Math.floor(time_secs / 2)) return json(res, 400, { error: 'implausible_delivered' });
-    if (streak > delivered) return json(res, 400, { error: 'implausible_streak' });
+    if (score > time_secs * MAX_SCORE_PER_SEC + MAX_BURST)
+        return rejectAndLog(res, 400, 'implausible_score', { score, time_secs, cap: time_secs * MAX_SCORE_PER_SEC + MAX_BURST });
+    if (delivered > Math.floor(time_secs / 2))
+        return rejectAndLog(res, 400, 'implausible_delivered', { delivered, time_secs, cap: Math.floor(time_secs / 2) });
+    if (streak > delivered)
+        return rejectAndLog(res, 400, 'implausible_streak', { streak, delivered });
 
     // 4) HMAC signature on the run token. We still need this in Node since the
     //    secret lives in env. The RPC just trusts that we verified it.
     let supabase;
     try { supabase = db(); }
-    catch (_) { return json(res, 500, { error: 'server_misconfigured' }); }
+    catch (_) { return rejectAndLog(res, 500, 'server_misconfigured'); }
 
     const tokenRow = await supabase
         .from('run_tokens')
         .select('id, issued_at')
         .eq('id', run_id)
         .maybeSingle();
-    if (tokenRow.error || !tokenRow.data) return json(res, 400, { error: 'unknown_token' });
+    if (tokenRow.error || !tokenRow.data) {
+        return rejectAndLog(res, 400, 'unknown_token', { pg_error: tokenRow.error?.code || null });
+    }
 
     let expected;
     try { expected = hmacToken(`${tokenRow.data.id}.${tokenRow.data.issued_at}`); }
-    catch (_) { return json(res, 500, { error: 'server_misconfigured' }); }
-    if (!timingSafeEqual(expected, token)) return json(res, 400, { error: 'bad_signature' });
+    catch (_) { return rejectAndLog(res, 500, 'server_misconfigured'); }
+    if (!timingSafeEqual(expected, token)) {
+        return rejectAndLog(res, 400, 'bad_signature', { issued_at: tokenRow.data.issued_at });
+    }
 
     // 5) Atomic claim + best-only upsert. The RPC re-fetches the token row
     //    under FOR UPDATE so we cannot lose a race against a concurrent submit.
@@ -103,12 +134,22 @@ export default async function handler(req, res) {
     });
 
     if (rpc.error) {
-        return json(res, 500, { error: 'write_failed', detail: rpc.error.message });
+        // Surface specific Supabase failure modes so the operator can fix
+        // them without reading server logs.
+        let code = 'write_failed';
+        const pgCode = rpc.error.code;
+        if (pgCode === '42883') code = 'rpc_missing';        // function does not exist
+        else if (pgCode === '42P01') code = 'table_missing';  // relation does not exist
+        else if (pgCode === '42703') code = 'column_missing'; // column does not exist
+        else if (pgCode === '23505') code = 'duplicate';      // unique violation (shouldn't happen)
+        logReject(code, { pg_code: pgCode, pg_message: rpc.error.message, hint: rpc.error.hint });
+        return json(res, 500, { error: code, pg_code: pgCode || null, detail: rpc.error.message });
     }
 
     const result = rpc.data || {};
     if (!result.ok) {
         const status = result.error === 'rate_limited' ? 429 : 400;
+        logReject(result.error || 'submit_failed', { from: 'rpc' });
         return json(res, status, { error: result.error || 'submit_failed' });
     }
 
