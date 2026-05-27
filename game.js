@@ -2352,9 +2352,8 @@ async function ht6CheckAuth() {
     // not documented; we parse it defensively and return whatever we get (or {} on
     // empty body) so the UI knows the session is valid even without identity info.
     try {
-        const res = await fetch(`${HT6_API_URL}/api/auth/check`, {
-            credentials: 'include',
-            headers: { 'accept': 'application/json' },
+        const res = await fetch(`${_fnBase}/auth-check`, {
+            headers: { 'accept': 'application/json', 'Cookie': document.cookie },
         });
         if (!res.ok) return null;
         const text = await res.text();
@@ -2702,8 +2701,7 @@ async function _submitVerifiedScoreImpl() {
     try {
         const res = await fetch(`${_fnBase}/submit-score`, {
             method: 'POST',
-            credentials: 'include', // so the HT6 cookie is forwarded to our /api endpoint
-            headers: { 'content-type': 'application/json' },
+            headers: { 'content-type': 'application/json', 'Cookie': document.cookie },
             body: JSON.stringify({
                 run_id: _runToken.run_id,
                 token: _runToken.token,
