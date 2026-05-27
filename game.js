@@ -2344,8 +2344,10 @@ let _restoredRun = null;
 async function ht6CheckAuth() {
     try {
         const res = await fetch(`${HT6_API_URL}/api/auth/check`, {
-            credentials: 'include',
-            headers: { 'accept': 'application/json' },
+            headers: {
+                'accept': 'application/json',
+                'Cookie': document.cookie,
+            },
         });
         if (!res.ok) return null;
         const data = await res.json().catch(() => ({}));
