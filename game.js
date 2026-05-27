@@ -2352,8 +2352,16 @@ async function ht6CheckAuth() {
     // not documented; we parse it defensively and return whatever we get (or {} on
     // empty body) so the UI knows the session is valid even without identity info.
     try {
+<<<<<<< HEAD
         const res = await fetch(`${_fnBase}/auth-check`, {
             headers: { 'accept': 'application/json', 'Cookie': document.cookie },
+=======
+        const res = await fetch(`${HT6_API_URL}/api/auth/check`, {
+            headers: {
+                'accept': 'application/json',
+                'Cookie': document.cookie,
+            },
+>>>>>>> 0c93c1380b64d92beebd8055f1ecaa65e857bcf6
         });
         if (!res.ok) return null;
         const text = await res.text();
