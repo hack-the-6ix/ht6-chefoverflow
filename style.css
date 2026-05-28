@@ -1763,6 +1763,11 @@ body.game-running #start-btn {
     color: var(--ht6-gold);
 }
 
+.about-modal-prize a {
+    color: var(--ht6-teal-light);
+    text-decoration: underline;
+}
+
 .about-modal-hint {
     margin-top: 14px !important;
     padding: 10px 12px;
