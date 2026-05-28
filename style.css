@@ -1255,16 +1255,17 @@ body.game-running #start-btn {
     align-items: center;
     gap: 6px;
     min-width: 0;
+    flex-wrap: wrap;
 }
 
 .order-row-name {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: var(--font-weight-extra);
     color: var(--text-highlight);
     line-height: 1.2;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow-wrap: break-word;
 }
 
 .order-row-stand {
@@ -1991,10 +1992,10 @@ body.game-running #start-btn {
     padding: 10px 12px;
     font-size: var(--text-xs);
     line-height: 1.5;
-    color: #5a3a00;
-    background: rgba(245, 207, 107, 0.18);
-    border: 1px solid rgba(245, 207, 107, 0.6);
-    border-radius: var(--radius-md, 10px);
+    color: var(--ht6-gold);
+    background: rgba(232, 184, 75, 0.08);
+    border: 1px solid rgba(232, 184, 75, 0.3);
+    border-radius: var(--radius-md);
 }
 
 .auth-card-warning[hidden] {
@@ -2002,8 +2003,8 @@ body.game-running #start-btn {
 }
 
 .auth-card-warning a {
-    color: inherit;
-    font-weight: var(--font-weight-extra, 700);
+    color: var(--ht6-teal-light);
+    font-weight: var(--font-weight-extra);
     text-decoration: underline;
 }
 

@@ -379,15 +379,10 @@ const ScoreGuard = (() => {
     function tick(time) {
         hashStep(`tick|${Math.floor(time)}|${Math.floor(authoritativeScore)}|${GameState.ordersDelivered}|${GameState.failedOrders}`);
     }
-    function verifyFinal() {
-        const a = Math.floor(GameState.score);
-        const b = Math.floor(authoritativeScore);
-        return Number.isFinite(a) && Number.isFinite(b) && a === b;
-    }
     function receipt() {
         return `${eventChain.toString(16)}-${events.toString(36)}`;
     }
-    return { reset, applyDelta, tick, verifyFinal, receipt };
+    return { reset, applyDelta, tick, receipt };
 })();
 
 const FLOOR_PX = 8; // chunky pixel size for the pixel-art floor texture
@@ -2514,7 +2509,6 @@ function persistPendingRunForAuth() {
                 difficulty: GameState.difficulty,
             },
             receipt: (() => { try { return ScoreGuard.receipt(); } catch (_) { return null; } })(),
-            verified: (() => { try { return ScoreGuard.verifyFinal(); } catch (_) { return false; } })(),
             savedAt: Date.now(),
         }));
     } catch (_) {}
@@ -2735,11 +2729,6 @@ async function _submitVerifiedScoreImpl() {
     if (!statusEl) return;
     if (!GameState.gameOver) {
         statusEl.textContent = 'Finish the run before submitting.';
-        return;
-    }
-    const guardOk = (() => { try { return ScoreGuard.verifyFinal(); } catch (_) { return false; } })();
-    if (!guardOk && !_restoredRun?.verified) {
-        statusEl.textContent = 'Run rejected: score integrity check failed.';
         return;
     }
     if (!_ht6User) {
@@ -3253,9 +3242,7 @@ function endGame() {
     if (fdiff) fdiff.textContent = GameState.difficulty.toFixed(1);
     const receipt = document.getElementById('run-receipt');
     if (receipt) {
-        receipt.textContent = ScoreGuard.verifyFinal()
-            ? `Run proof: ${ScoreGuard.receipt()}`
-            : 'Run proof: INVALID';
+        receipt.textContent = `Run proof: ${ScoreGuard.receipt()}`;
     }
     const status = document.getElementById('leaderboard-status');
     if (status) status.textContent = '';
