@@ -687,24 +687,40 @@ function drawIngredientIconCircle(ingredient, cx, cy, radius, state) {
         ctx.lineWidth = 2;
         ctx.stroke();
     }
+    // Tint + badge overlay so cooked/chopped/burnt are visually obvious even
+    // when no state-specific skin exists.
+    let tintColor = null;
+    let badgeText = null;
     if (state === INGREDIENT_STATES.CHOPPED) {
-        ctx.font = 'bold 8px Inter, system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#2e7d32';
-        ctx.fillText('✓', cx + radius * 0.5, cy - radius * 0.5);
+        tintColor = 'rgba(76, 175, 80, 0.45)';
+        badgeText = '✓';
     } else if (state === INGREDIENT_STATES.COOKED) {
-        ctx.font = 'bold 8px Inter, system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#e65100';
-        ctx.fillText('✓', cx + radius * 0.5, cy - radius * 0.5);
+        tintColor = 'rgba(180, 90, 20, 0.55)';
+        badgeText = '✓';
     } else if (state === INGREDIENT_STATES.BURNT) {
-        ctx.font = 'bold 8px Inter, system-ui, sans-serif';
+        tintColor = 'rgba(20, 10, 5, 0.72)';
+        badgeText = '✗';
+    }
+    if (tintColor) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.fillStyle = tintColor;
+        ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+        ctx.restore();
+        const badgeR = Math.max(4, radius * 0.52);
+        const bx = cx + radius * 0.46;
+        const by = cy - radius * 0.46;
+        ctx.beginPath();
+        ctx.arc(bx, by, badgeR, 0, Math.PI * 2);
+        ctx.fillStyle = state === INGREDIENT_STATES.BURNT ? '#b71c1c' : state === INGREDIENT_STATES.CHOPPED ? '#2e7d32' : '#bf360c';
+        ctx.fill();
+        ctx.font = `bold ${Math.max(6, Math.floor(badgeR * 1.5))}px Inter, system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#c62828';
-        ctx.fillText('✗', cx + radius * 0.5, cy - radius * 0.5);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(badgeText, bx, by);
     }
 }
 
@@ -2633,7 +2649,7 @@ function loadLeaderboard() {
 }
 
 function saveLeaderboard(entries) {
-    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(entries.slice(0, 10)));
+    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(entries.slice(0, 5)));
 }
 
 async function fetchTopScores() {
@@ -2643,7 +2659,7 @@ async function fetchTopScores() {
             .from('leaderboard_public')
             .select('display_name, score, grade, streak, delivered')
             .order('score', { ascending: false })
-            .limit(10);
+            .limit(5);
         return error ? null : data;
     } catch (e) {
         return null;
@@ -2691,7 +2707,7 @@ async function fetchGlobalLeaderboard() {
             .from('leaderboard_public')
             .select('display_name, score, grade, streak, delivered')
             .order('score', { ascending: false })
-            .limit(10);
+            .limit(5);
         return error ? null : data;
     } catch (e) {
         return null;
