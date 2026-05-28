@@ -380,7 +380,9 @@ const ScoreGuard = (() => {
         hashStep(`tick|${Math.floor(time)}|${Math.floor(authoritativeScore)}|${GameState.ordersDelivered}|${GameState.failedOrders}`);
     }
     function verifyFinal() {
-        return GameState.score === authoritativeScore && events > 0;
+        const a = Math.floor(GameState.score);
+        const b = Math.floor(authoritativeScore);
+        return Number.isFinite(a) && Number.isFinite(b) && a === b;
     }
     function receipt() {
         return `${eventChain.toString(16)}-${events.toString(36)}`;
@@ -2375,28 +2377,31 @@ let _ht6User = null;
 let _restoredRun = null;
 
 async function ht6CheckAuth() {
-    // Client-side liveness check: are we signed into HT6? The server independently
-    // re-verifies on submit by forwarding the inbound cookie. The response body is
-    // not documented; we parse it defensively and return whatever we get (or {} on
-    // empty body) so the UI knows the session is valid even without identity info.
+    // Returns { status, user? }.
+    //   status 200 → signed in with a profile (user present)
+    //   status 403 → signed in but missing the HT6 S26 form response (needs to start an application)
+    //   status 401 → signed out
+    //   status 0   → network/transport error
     try {
         const res = await fetch(`${_fnBase}/auth-check`, {
             headers: { 'accept': 'application/json' },
         });
-        if (!res.ok) return null;
+        if (!res.ok) return { status: res.status };
         const text = await res.text();
-        if (!text) return {}; // signed in, no profile
+        if (!text) return { status: 200, user: {} };
         try {
             const data = JSON.parse(text);
             const payload = data?.data ?? data;
-            return (payload && payload.user) || payload || {};
+            return { status: 200, user: (payload && payload.user) || payload || {} };
         } catch (_) {
-            return {};
+            return { status: 200, user: {} };
         }
     } catch (_) {
-        return null;
+        return { status: 0 };
     }
 }
+
+const HT6_APPLY_URL = 'https://auth.hackthe6ix.com/login?response_type=code&client_id=2k5d1u7bi2d6mkirh00n7v4rf3&redirect_uri=https%3A%2F%2Fv2.api.hackthe6ix.com%2Fapi%2Fauth%2Fcallback&state=https%3A%2F%2F2026.apply.hackthe6ix.com&scope=openid+email+profile+phone+aws.cognito.signin.user.admin';
 
 function ht6LoginUrl() {
     const u = new URL(`${HT6_API_URL}/api/auth/login`);
@@ -2473,13 +2478,23 @@ function applySignedInUI() {
     }
 }
 
-function applySignedOutUI() {
+function applySignedOutUI(reason) {
     const signinCard = document.getElementById('auth-signin-card');
     const identityCard = document.getElementById('auth-identity-card');
     const submitBtn = document.getElementById('submit-score-btn');
+    const warning = document.getElementById('auth-signin-warning');
+    const title = document.getElementById('auth-signin-title');
+    const body = document.getElementById('auth-signin-body');
+    const btnLabel = document.getElementById('ht6-login-btn-label');
     if (signinCard) signinCard.hidden = false;
     if (identityCard) identityCard.hidden = true;
     if (submitBtn) submitBtn.hidden = true;
+
+    const needsApplication = reason === 'needs_application';
+    if (warning) warning.hidden = !needsApplication;
+    if (title) title.textContent = needsApplication ? 'Almost there' : 'Sign in with Hack the 6ix';
+    if (body) body.hidden = needsApplication;
+    if (btnLabel) btnLabel.textContent = needsApplication ? 'Try signing in again' : 'Sign in with HT6';
 }
 
 function persistPendingRunForAuth() {
@@ -2562,10 +2577,15 @@ async function initHt6Auth() {
         });
     }
 
-    _ht6User = await ht6CheckAuth();
-    if (_ht6User) {
+    const authResult = await ht6CheckAuth();
+    if (authResult.status === 200) {
+        _ht6User = authResult.user || {};
         applySignedInUI();
+    } else if (authResult.status === 403) {
+        _ht6User = null;
+        applySignedOutUI('needs_application');
     } else {
+        _ht6User = null;
         applySignedOutUI();
     }
 }

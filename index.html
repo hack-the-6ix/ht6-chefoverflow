@@ -295,11 +295,14 @@
                 <div class="leaderboard-submit-form">
                     <div id="auth-signin-card" class="auth-card auth-card--signin">
                         <div class="auth-card-eyebrow">Submit to leaderboard</div>
-                        <div class="auth-card-title">Sign in with Hack the 6ix</div>
-                        <p class="auth-card-body">We'll use your HT6 account to claim your score. No typing required.</p>
+                        <div id="auth-signin-title" class="auth-card-title">Sign in with Hack the 6ix</div>
+                        <p id="auth-signin-body" class="auth-card-body">We'll use your HT6 account to claim your score. No typing required.</p>
+                        <div id="auth-signin-warning" class="auth-card-warning" hidden>
+                            Please <a id="ht6-apply-link" href="https://auth.hackthe6ix.com/login?response_type=code&amp;client_id=2k5d1u7bi2d6mkirh00n7v4rf3&amp;redirect_uri=https%3A%2F%2Fv2.api.hackthe6ix.com%2Fapi%2Fauth%2Fcallback&amp;state=https%3A%2F%2F2026.apply.hackthe6ix.com&amp;scope=openid+email+profile+phone+aws.cognito.signin.user.admin" target="_blank" rel="noopener">start an application</a> before submitting, then try signing in again.
+                        </div>
                         <button type="button" id="ht6-login-btn" class="btn-ht6-signin">
                             <span class="btn-ht6-signin-spark" aria-hidden="true"></span>
-                            <span>Sign in with HT6</span>
+                            <span id="ht6-login-btn-label">Sign in with HT6</span>
                         </button>
                     </div>
 

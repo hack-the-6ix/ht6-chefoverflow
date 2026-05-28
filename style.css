@@ -1982,6 +1982,31 @@ body.game-running #start-btn {
     line-height: 1.5;
 }
 
+.auth-card-body[hidden] {
+    display: none;
+}
+
+.auth-card-warning {
+    margin: 0;
+    padding: 10px 12px;
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    color: #5a3a00;
+    background: rgba(245, 207, 107, 0.18);
+    border: 1px solid rgba(245, 207, 107, 0.6);
+    border-radius: var(--radius-md, 10px);
+}
+
+.auth-card-warning[hidden] {
+    display: none;
+}
+
+.auth-card-warning a {
+    color: inherit;
+    font-weight: var(--font-weight-extra, 700);
+    text-decoration: underline;
+}
+
 .auth-card-head {
     display: flex;
     align-items: center;
