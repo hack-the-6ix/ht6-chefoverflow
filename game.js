@@ -675,17 +675,37 @@ function drawDishIcon(dishName, x, y, w, h) {
     return !!(path && SkinStore.draw(path, x, y, w, h, 'contain'));
 }
 
-function drawIngredientIconCircle(ingredient, cx, cy, radius) {
+function drawIngredientIconCircle(ingredient, cx, cy, radius, state) {
     const path = SKIN_SOURCES.ingredient[ingredient];
     const size = radius * 2.2;
-    if (path && SkinStore.draw(path, cx - size / 2, cy - size / 2, size, size)) return;
-    ctx.fillStyle = COLORS[ingredient] || '#888';
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    if (!(path && SkinStore.draw(path, cx - size / 2, cy - size / 2, size, size))) {
+        ctx.fillStyle = COLORS[ingredient] || '#888';
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+    if (state === INGREDIENT_STATES.CHOPPED) {
+        ctx.font = 'bold 8px Inter, system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#2e7d32';
+        ctx.fillText('✓', cx + radius * 0.5, cy - radius * 0.5);
+    } else if (state === INGREDIENT_STATES.COOKED) {
+        ctx.font = 'bold 8px Inter, system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#e65100';
+        ctx.fillText('✓', cx + radius * 0.5, cy - radius * 0.5);
+    } else if (state === INGREDIENT_STATES.BURNT) {
+        ctx.font = 'bold 8px Inter, system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#c62828';
+        ctx.fillText('✗', cx + radius * 0.5, cy - radius * 0.5);
+    }
 }
 
 // =============================================
@@ -1911,7 +1931,7 @@ function drawStations() {
             ctx.arc(px + CELL_SIZE / 2, py + CELL_SIZE / 2, 16, 0, Math.PI * 2);
             ctx.fill();
 
-            drawIngredientIconCircle(stove.cooking.ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, (CELL_SIZE - 28) / 2);
+            drawIngredientIconCircle(stove.cooking.ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, (CELL_SIZE - 28) / 2, stove.cooking.state);
 
             let barColor;
             if (progress >= 1.2) barColor = '#f44336';
@@ -1963,7 +1983,7 @@ function drawStations() {
         }
 
         if (board.processing) {
-            drawIngredientIconCircle(board.processing.ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, (CELL_SIZE - 24) / 2);
+            drawIngredientIconCircle(board.processing.ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, (CELL_SIZE - 24) / 2, board.processing.state);
 
             const progress = board.processTime / board.maxProcessTime;
             const barY = py + CELL_SIZE - 12;
@@ -2009,14 +2029,14 @@ function drawStations() {
             const drewDish = dishName && drawDishIcon(dishName, px + 4, py + 4, CELL_SIZE - 8, CELL_SIZE - 8);
             if (!drewDish) {
                 if (plateItems.length === 1) {
-                    drawIngredientIconCircle(plateItems[0].ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, 9);
+                    drawIngredientIconCircle(plateItems[0].ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, 9, plateItems[0].state);
                 } else {
                     const angleStep = (Math.PI * 2) / plateItems.length;
                     plateItems.forEach((item, i) => {
                         const angle = i * angleStep - Math.PI / 2;
                         const ix = px + CELL_SIZE / 2 + Math.cos(angle) * 8;
                         const iy = py + CELL_SIZE / 2 + Math.sin(angle) * 8;
-                        drawIngredientIconCircle(item.ingredient, ix, iy, 7);
+                        drawIngredientIconCircle(item.ingredient, ix, iy, 7, item.state);
                     });
                 }
             }
@@ -2139,14 +2159,14 @@ function drawCounters() {
                     ctx.lineWidth = 2;
                     ctx.stroke();
                     if (top.items && top.items.length === 1) {
-                        drawIngredientIconCircle(top.items[0].ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, 8);
+                        drawIngredientIconCircle(top.items[0].ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, 8, top.items[0].state);
                     } else if (top.items && top.items.length > 1) {
                         const angleStep = (Math.PI * 2) / top.items.length;
                         top.items.forEach((item, i) => {
                             const angle = i * angleStep - Math.PI / 2;
                             const ix = px + CELL_SIZE / 2 + Math.cos(angle) * 6;
                             const iy = py + CELL_SIZE / 2 + Math.sin(angle) * 6;
-                            drawIngredientIconCircle(item.ingredient, ix, iy, 5);
+                            drawIngredientIconCircle(item.ingredient, ix, iy, 5, item.state);
                         });
                     } else {
                         ctx.fillStyle = '#333';
@@ -2157,7 +2177,7 @@ function drawCounters() {
                     }
                 }
             } else {
-                drawIngredientIconCircle(top.ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, 9);
+                drawIngredientIconCircle(top.ingredient, px + CELL_SIZE / 2, py + CELL_SIZE / 2, 9, top.state);
             }
         }
     }
@@ -2254,20 +2274,7 @@ function drawChef(chef) {
                 }
             }
         } else {
-            drawIngredientIconCircle(chef.holding.ingredient, bx, by, r);
-            ctx.font = 'bold 8px Inter, system-ui, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            if (chef.holding.state === INGREDIENT_STATES.CHOPPED) {
-                ctx.fillStyle = '#2e7d32';
-                ctx.fillText('✓', bx + 5, by - 5);
-            } else if (chef.holding.state === INGREDIENT_STATES.COOKED) {
-                ctx.fillStyle = '#e65100';
-                ctx.fillText('✓', bx + 5, by - 5);
-            } else if (chef.holding.state === INGREDIENT_STATES.BURNT) {
-                ctx.fillStyle = '#c62828';
-                ctx.fillText('✗', bx + 5, by - 5);
-            }
+            drawIngredientIconCircle(chef.holding.ingredient, bx, by, r, chef.holding.state);
         }
     }
 
@@ -2748,7 +2755,7 @@ async function _submitVerifiedScoreImpl() {
 
     const entry = {
         email,
-        score: Math.floor(GameState.score),
+        score: Math.max(0, Math.floor(GameState.score)),
         grade: gradeFromScore(GameState.score).letter,
         streak: GameState.bestStreak,
         delivered: GameState.ordersDelivered,
@@ -3003,10 +3010,6 @@ function updateUI() {
             vip.textContent = 'VIP';
             titleRow.appendChild(vip);
         }
-        const stand = document.createElement('span');
-        stand.className = 'order-row-stand';
-        stand.textContent = 'S' + standNumberFromStandId(order.standId);
-        titleRow.appendChild(stand);
         body.appendChild(titleRow);
 
         const ings = document.createElement('div');
@@ -3035,11 +3038,18 @@ function updateUI() {
 
         row.appendChild(body);
 
-        // Timer, top-right.
+        // Timer + stand chip, right column.
+        const meta = document.createElement('div');
+        meta.className = 'order-row-meta';
         const timer = document.createElement('div');
         timer.className = 'order-row-timer';
         timer.textContent = `${Math.ceil(order.timeLeft)}s`;
-        row.appendChild(timer);
+        meta.appendChild(timer);
+        const stand = document.createElement('span');
+        stand.className = 'order-row-stand';
+        stand.textContent = 'S' + standNumberFromStandId(order.standId);
+        meta.appendChild(stand);
+        row.appendChild(meta);
 
         // 2px progress bar as bottom border of the row.
         const bar = document.createElement('div');

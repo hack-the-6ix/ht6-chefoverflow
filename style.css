@@ -1246,8 +1246,10 @@ body.game-running #start-btn {
 .order-row-body {
     min-width: 0;
     display: flex;
-    flex-direction: column;
-    gap: 6px;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 .order-row-title {
@@ -1317,14 +1319,20 @@ body.game-running #start-btn {
 .order-row-ing[data-state="cooked"]  { box-shadow: inset 0 -2px 0 var(--ht6-amber, #D4944C); }
 .order-row-ing[data-state="burnt"]   { box-shadow: inset 0 -2px 0 var(--ht6-coral); opacity: 0.6; }
 
+.order-row-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
 .order-row-timer {
-    align-self: start;
     font-family: var(--font-heading);
     font-size: 16px;
     font-weight: var(--font-weight-extra);
     font-variant-numeric: tabular-nums;
     line-height: 1.1;
-    padding-top: 2px;
 }
 
 .order-row[data-urgency="healthy"] .order-row-timer { color: var(--ht6-teal); }
