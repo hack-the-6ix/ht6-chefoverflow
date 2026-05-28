@@ -824,7 +824,7 @@ body.game-running #start-btn {
 #bottom-row {
     display: flex;
     gap: var(--space-default);
-    align-items: flex-start;
+    align-items: stretch;
     width: 100%;
     max-width: 100%;
     margin-top: var(--space-major);
@@ -841,6 +841,9 @@ body.game-running #start-btn {
     flex-shrink: 1;
     min-width: 280px;
     max-width: 360px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 .lb-who {
@@ -873,7 +876,8 @@ body.game-running #start-btn {
     flex-direction: column;
     gap: 8px;
     margin-top: 4px;
-    max-height: 480px;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: rgba(68, 217, 184, 0.35) rgba(0,0,0,0.25);
