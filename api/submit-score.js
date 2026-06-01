@@ -14,10 +14,48 @@
 
 import { db, hmacToken, json, readJsonBody, timingSafeEqual, verifyHt6Session } from './_lib.js';
 
-const MAX_SCORE_PER_SEC = 250;
 const MAX_BURST = 1000;
 const MIN_RUN_SECONDS = 10;
 const MAX_RUN_SECONDS = 3600;
+
+// --- Server-authoritative score ceiling -------------------------------------
+// The client computes its own score, so a tampered client (e.g. setting
+// GameState.difficulty or overriding computeDifficulty from the console) can
+// post any number. The server can't replay the run, but it CAN derive the
+// maximum score the *real* game could possibly award for a run of a given
+// length, using the same difficulty curve as game.js, and reject anything
+// above it. This is a generous upper bound — it protects legit elite runs —
+// but the classic "9999x difficulty" exploit overshoots it by orders of
+// magnitude, so it gets rejected.
+//
+// Mirrors computeDifficulty()/getPerformanceAdjustment() in game.js. If the
+// curve there changes, update maxBaseDifficulty() to match.
+const MAX_PERF_MULT     = 1.3;  // 1 + max getPerformanceAdjustment() (+0.3)
+const MAX_STREAK_MULT   = 2.0;  // 1 + min(1.0, streak*0.05)
+const MAX_VIP_MULT      = 1.5;  // station.order.vip ? 1.5 : 1
+const MAX_TIME_BONUS    = 200;  // floor(order.timeLeft*2), generous ceiling
+const SCORE_SAFETY_MULT = 1.25; // headroom so modeling slack never burns a legit run
+
+// Highest base difficulty reachable by time t (the curve is monotonic, so the
+// end-of-run value bounds the whole run).
+function maxBaseDifficulty(t) {
+    if (t < 60)  return 1.1;                  // tutorial: 1.0 -> 1.1
+    if (t < 150) return 1.6;                  // ramp: 1.1 -> 1.6
+    if (t < 600) return 3.2;                  // automation: 1.6 -> 3.2
+    return 3.2 + (t - 600) * 0.006;           // endurance: +0.006/s
+}
+
+// Upper bound on the total score a legitimate run of `time_secs` can produce.
+function maxPlausibleScore(time_secs) {
+    const maxDiff = maxBaseDifficulty(time_secs) * MAX_PERF_MULT;
+    // Delivered is independently capped at floor(time/2); each delivery is at
+    // most (100*difficulty + timeBonus) * streakMult * vipMult.
+    const maxDeliveries = Math.floor(time_secs / 2);
+    const perDelivery = (100 * maxDiff + MAX_TIME_BONUS) * MAX_STREAK_MULT * MAX_VIP_MULT;
+    // Endurance ticks add dt*difficulty each second; bounded by maxDiff*time.
+    const enduranceTicks = maxDiff * time_secs;
+    return Math.ceil((maxDeliveries * perDelivery + enduranceTicks) * SCORE_SAFETY_MULT) + MAX_BURST;
+}
 // 110 min: leaves headroom for a full 60-min run plus an expired-HT6-session
 // re-login roundtrip (which can take many minutes if the user steps away).
 // Must stay >= MAX_RUN_SECONDS + slack, and < the 2h run_tokens cleanup window
@@ -27,10 +65,11 @@ const TOKEN_MIN_AGE_MS = MIN_RUN_SECONDS * 1000;
 const RATE_LIMIT_MS = 30 * 1000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// 'log' (default): plausibility violations are logged but not rejected, so we
-// can tune caps from real-run data without burning legit players. Flip to
-// 'strict' via env once telemetry is in.
-const PLAUSIBILITY_MODE = process.env.PLAUSIBILITY_MODE === 'strict' ? 'strict' : 'log';
+// 'strict' (default): plausibility violations are REJECTED. This is what stops
+// client-side score tampering from landing on the leaderboard. Set
+// PLAUSIBILITY_MODE=log only as an emergency escape hatch if a cap is found to
+// burn legit runs; violations are then logged but accepted.
+const PLAUSIBILITY_MODE = process.env.PLAUSIBILITY_MODE === 'log' ? 'log' : 'strict';
 
 function isInt(n, min, max) {
     return typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max;
@@ -105,11 +144,12 @@ export default async function handler(req, res) {
     }
     const email = auth.user.email.toLowerCase();
 
-    // 3) Plausibility. In 'log' mode we record violations but accept the
-    //    submission, so we can tune caps from real telemetry.
+    // 3) Plausibility. In 'strict' mode (default) violations are rejected; in
+    //    'log' mode they're recorded but accepted (emergency escape hatch).
+    const scoreCap = maxPlausibleScore(time_secs);
     const plausibilityChecks = [
-        score > time_secs * MAX_SCORE_PER_SEC + MAX_BURST
-            ? { reason: 'implausible_score', ctx: { score, time_secs, cap: time_secs * MAX_SCORE_PER_SEC + MAX_BURST } }
+        score > scoreCap
+            ? { reason: 'implausible_score', ctx: { score, time_secs, cap: scoreCap } }
             : null,
         delivered > Math.floor(time_secs / 2)
             ? { reason: 'implausible_delivered', ctx: { delivered, time_secs, cap: Math.floor(time_secs / 2) } }
