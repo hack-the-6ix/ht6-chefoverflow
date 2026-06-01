@@ -5,9 +5,12 @@
 
 import { db, hmacToken, json, readJsonBody } from './_lib.js';
 
-// Cap a single IP at 10 active tokens/minute. Without this, anonymous clients
-// can pile rows into run_tokens unbounded and inflate DB cost.
-const PER_IP_LIMIT = 10;
+// Cap a single IP at N active tokens/minute. Without this, anonymous clients
+// can pile rows into run_tokens unbounded and inflate DB cost. Kept generous
+// because legit players at a shared venue (hackathon Wi-Fi, office NAT) all
+// egress from one IP — a low cap silently 429s real players, who then complete
+// a full run with no token and only discover it at submit time.
+const PER_IP_LIMIT = 200;
 const PER_IP_WINDOW_MS = 60 * 1000;
 
 export default async function handler(req, res) {
