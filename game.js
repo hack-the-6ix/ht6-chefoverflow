@@ -2608,28 +2608,52 @@ async function initHt6Auth() {
 }
 
 let _runToken = null; // { run_id, token } issued by start-run
+let _runTokenRetryTimer = null;
+const _RUN_TOKEN_MAX_ATTEMPTS = 8;
 
-async function startRun() {
+function startRun() {
     _runToken = null;
+    if (_runTokenRetryTimer) {
+        clearTimeout(_runTokenRetryTimer);
+        _runTokenRetryTimer = null;
+    }
+    _issueRunToken(0);
+}
+
+// Acquire a run token, retrying in the background while the run is still in
+// progress. A transient start-run failure at t=0 (shared-IP rate limit, cold
+// start, network blip) must not silently doom an entire winning run that can
+// never be submitted. A token issued a few seconds into a run is still older
+// than the server's 10s min-age gate by the time any real run ends.
+async function _issueRunToken(attempt) {
     try {
         const res = await fetch(`${_fnBase}/start-run`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: '{}',
         });
-        if (!res.ok) {
-            setLeaderboardOffline(true);
-            return;
-        }
-        const data = await res.json();
-        if (data && data.run_id && data.token) {
-            _runToken = { run_id: data.run_id, token: data.token };
-            setLeaderboardOffline(false);
-        } else {
-            setLeaderboardOffline(true);
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.run_id && data.token) {
+                _runToken = { run_id: data.run_id, token: data.token };
+                setLeaderboardOffline(false);
+                return;
+            }
         }
     } catch (e) {
-        setLeaderboardOffline(true);
+        /* fall through to retry */
+    }
+
+    setLeaderboardOffline(true);
+
+    // Keep retrying only while the run is live, so we stop once the player
+    // navigates away or starts a fresh game (which resets the timer anyway).
+    if (GameState.running && !GameState.gameOver && attempt < _RUN_TOKEN_MAX_ATTEMPTS) {
+        const delay = Math.min(1000 * 2 ** attempt, 15000);
+        _runTokenRetryTimer = setTimeout(() => {
+            _runTokenRetryTimer = null;
+            _issueRunToken(attempt + 1);
+        }, delay);
     }
 }
 
@@ -3220,6 +3244,7 @@ function startGame() {
     stations.stoves.forEach(s => { s.cooking = null; s.cookTime = 0; s.busy = false; });
     stations.cuttingBoards.forEach(s => { s.processing = null; s.processTime = 0; s.busy = false; });
     stations.platingAreas.forEach(s => { s.items = []; s.busy = false; });
+    stations.counters.forEach(s => { s.items = []; });
     stations.receptionStands.forEach(s => { s.order = null; s.customer = null; });
     
     orders.length = 0;
