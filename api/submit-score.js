@@ -18,9 +18,11 @@ const MAX_SCORE_PER_SEC = 250;
 const MAX_BURST = 1000;
 const MIN_RUN_SECONDS = 10;
 const MAX_RUN_SECONDS = 3600;
-// 65 min: leaves headroom for a full 60-min run plus the OAuth roundtrip
-// on submit. Must stay >= MAX_RUN_SECONDS + some slack.
-const TOKEN_MAX_AGE_MS = 65 * 60 * 1000;
+// 110 min: leaves headroom for a full 60-min run plus an expired-HT6-session
+// re-login roundtrip (which can take many minutes if the user steps away).
+// Must stay >= MAX_RUN_SECONDS + slack, and < the 2h run_tokens cleanup window
+// (run_tokens_hygiene migration) so the token isn't deleted out from under us.
+const TOKEN_MAX_AGE_MS = 110 * 60 * 1000;
 const TOKEN_MIN_AGE_MS = MIN_RUN_SECONDS * 1000;
 const RATE_LIMIT_MS = 30 * 1000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

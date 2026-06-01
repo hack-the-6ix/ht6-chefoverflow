@@ -2849,14 +2849,26 @@ async function _submitVerifiedScoreImpl() {
             statusEl.textContent = friendly || fallback;
             statusEl.dataset.errorCode = reason;
             console.error('[ht6] submit-score rejected', { status: res.status, reason, data });
+            // The HT6 cookie session expired server-side while the client still
+            // believed it was signed in. Persist the run and surface the in-end-
+            // screen sign-in button so the user can re-auth in place; the OAuth
+            // round trip returns here and restorePendingRunIfAny() rebuilds the
+            // end screen instead of losing the run proof.
+            if (reason === 'ht6_unauthenticated') {
+                _ht6User = null;
+                persistPendingRunForAuth();
+                applySignedOutUI();
+            }
         } else if (data?.kept_existing) {
             statusEl.textContent = `Submitted — your previous best (${data.best.toLocaleString()}) still stands.`;
-            // Token is one-shot; clear it.
+            // Token is one-shot; clear it and the persisted end screen.
             _runToken = null;
+            try { localStorage.removeItem(PENDING_RUN_KEY); } catch (_) {}
             renderSideLeaderboard();
         } else {
             statusEl.textContent = 'Score submitted to global leaderboard!';
             _runToken = null;
+            try { localStorage.removeItem(PENDING_RUN_KEY); } catch (_) {}
             renderSideLeaderboard();
         }
     } catch (e) {
@@ -3182,6 +3194,8 @@ function startGame() {
     GameState.time = 0;
     GameState.score = 0;
     ScoreGuard.reset();
+    // A fresh run supersedes any persisted end screen from a prior game.
+    try { localStorage.removeItem(PENDING_RUN_KEY); } catch (_) {}
     startRun();
     GameState.difficulty = 1.0;
     GameState.streak = 0;
@@ -3273,6 +3287,12 @@ function endGame() {
     const status = document.getElementById('leaderboard-status');
     if (status) status.textContent = '';
     renderLeaderboard();
+
+    // Persist the run the moment it becomes submittable so the end screen
+    // survives a reload or the HT6 OAuth round trip (e.g. a session that
+    // expired mid-run). Without this the run proof lives only in memory and
+    // is lost on any navigation.
+    persistPendingRunForAuth();
 
     document.getElementById('game-over').classList.remove('hidden');
     document.getElementById('start-btn').disabled = false;
