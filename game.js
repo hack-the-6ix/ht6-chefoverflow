@@ -3206,6 +3206,7 @@ function startGame() {
     stations.stoves.forEach(s => { s.cooking = null; s.cookTime = 0; s.busy = false; });
     stations.cuttingBoards.forEach(s => { s.processing = null; s.processTime = 0; s.busy = false; });
     stations.platingAreas.forEach(s => { s.items = []; s.busy = false; });
+    stations.counters.forEach(s => { s.items = []; });
     stations.receptionStands.forEach(s => { s.order = null; s.customer = null; });
     
     orders.length = 0;
