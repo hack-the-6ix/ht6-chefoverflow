@@ -27,10 +27,11 @@ const TOKEN_MIN_AGE_MS = MIN_RUN_SECONDS * 1000;
 const RATE_LIMIT_MS = 30 * 1000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// 'log' (default): plausibility violations are logged but not rejected, so we
-// can tune caps from real-run data without burning legit players. Flip to
-// 'strict' via env once telemetry is in.
-const PLAUSIBILITY_MODE = process.env.PLAUSIBILITY_MODE === 'strict' ? 'strict' : 'log';
+// 'strict' (default): plausibility violations are rejected. This is the
+// fail-safe default — an unset/typo'd env var must not silently disable the
+// anti-cheat caps. Set PLAUSIBILITY_MODE=log explicitly to only log violations
+// (e.g. while tuning caps from real-run telemetry).
+const PLAUSIBILITY_MODE = process.env.PLAUSIBILITY_MODE === 'log' ? 'log' : 'strict';
 
 function isInt(n, min, max) {
     return typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max;
