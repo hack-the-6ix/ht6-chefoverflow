@@ -93,7 +93,7 @@ const _SIM_DT    = 1 / 60; // fixed timestep
 function _pushSimInteract(chefId, stationId) {
     if (!_sim) return;
     if (_inputLog.length < INPUT_LOG_MAX_EVENTS) {
-        const ev = { tick: _simTick, chefId, stationId };
+        const ev = { tick: _simTick, type: 'interact', chefId, stationId };
         _inputLog.push(ev);
         // Apply to live sim immediately at current tick.
         // (The sim's step() has already been called for this tick, so the
