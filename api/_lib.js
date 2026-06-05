@@ -92,20 +92,25 @@ export function timingSafeEqual(a, b) {
 }
 
 const AUTH_CHECK_TIMEOUT_MS = 3000;
-const HT6_SEASON_CODE = process.env.HT6_SEASON_CODE || 'S26';
-
 /**
  * Verify the HT6 session and resolve the authenticated user's profile.
  *
- * Two-hop strategy (HT6's /auth/check returns no body):
- *   1. /api/auth/check + /api/seasons/{code}/responses run in parallel.
- *      The responses endpoint scopes results to the current user, giving us
- *      their userId without a separate /me endpoint.
- *   2. /api/users/{userId} fetches the trusted email and display name.
+ * Single source of truth: GET /api/action/profile returns the CURRENT caller's
+ * own user record (`fetchUser(req.executor)` on the HT6 backend). This is the
+ * only correct way to identify the caller.
+ *
+ * History/why: we used to derive the userId from
+ * `/api/seasons/{code}/responses` -> data[0].userId. That endpoint is NOT
+ * scoped to the caller for privileged accounts (organizers/admins see ALL
+ * applicants), so data[0] was a *random other applicant* — we then fetched and
+ * trusted that person's email/name. That impersonation bug is why this now
+ * goes straight to /action/profile.
  *
  * Returns { ok: boolean, status, user? } where user has { email, userId,
  * firstName, lastName } drawn entirely from HT6's database — never from the
  * client request body.
+ *   401 -> signed out;  403 -> signed in but not permitted to fetch a hacker
+ *   profile;  502/504 -> upstream error/timeout.
  */
 export async function verifyHt6Session(req) {
     const cookie = req.headers['cookie'];
@@ -117,63 +122,36 @@ export async function verifyHt6Session(req) {
         'user-agent': 'chef-overflow-server/1.0',
     };
 
-    // Step 1: auth liveness check + userId lookup in parallel.
-    let authOk = false;
-    let userId = null;
+    let body;
     try {
-        const [authRes, respRes] = await Promise.all([
-            fetch(`${HT6_API_URL}/api/auth/check`, {
-                method: 'GET',
-                headers: ht6Headers,
-                signal: AbortSignal.timeout(AUTH_CHECK_TIMEOUT_MS),
-            }),
-            fetch(`${HT6_API_URL}/api/seasons/${HT6_SEASON_CODE}/responses`, {
-                method: 'GET',
-                headers: ht6Headers,
-                signal: AbortSignal.timeout(AUTH_CHECK_TIMEOUT_MS),
-            }),
-        ]);
-
-        authOk = authRes.ok;
-
-        if (respRes.ok) {
-            try {
-                const body = await respRes.json();
-                userId = body?.data?.[0]?.userId ?? null;
-            } catch (_) {}
-        }
-    } catch (err) {
-        const status = err?.name === 'TimeoutError' ? 504 : 502;
-        return { ok: false, status };
-    }
-
-    if (!authOk) return { ok: false, status: 401 };
-    if (!userId) return { ok: false, status: 403 }; // authed but no S26 form response
-
-    // Step 2: fetch the full user profile for trusted email + display name.
-    try {
-        const profileRes = await fetch(`${HT6_API_URL}/api/users/${userId}`, {
+        const res = await fetch(`${HT6_API_URL}/api/action/profile`, {
             method: 'GET',
             headers: ht6Headers,
             signal: AbortSignal.timeout(AUTH_CHECK_TIMEOUT_MS),
         });
-        if (!profileRes.ok) return { ok: false, status: 502 };
-
-        const data = await profileRes.json();
-        if (!data || typeof data.email !== 'string') return { ok: false, status: 502 };
-
-        return {
-            ok: true,
-            status: 200,
-            user: {
-                email:     data.email,
-                userId:    data.userId,
-                firstName: data.firstName ?? null,
-                lastName:  data.lastName  ?? null,
-            },
-        };
+        if (res.status === 401) return { ok: false, status: 401 };
+        if (res.status === 403) return { ok: false, status: 403 };
+        if (!res.ok) return { ok: false, status: 502 };
+        body = await res.json();
     } catch (err) {
         const status = err?.name === 'TimeoutError' ? 504 : 502;
         return { ok: false, status };
     }
+
+    // HT6 wraps payloads inconsistently ({ message }, { data }, or raw).
+    // Unwrap defensively and take the single user object.
+    let user = body?.message ?? body?.data ?? body;
+    if (Array.isArray(user)) user = user[0];
+    if (!user || typeof user.email !== 'string') return { ok: false, status: 502 };
+
+    return {
+        ok: true,
+        status: 200,
+        user: {
+            email:     user.email,
+            userId:    user._id ?? user.userId ?? null,
+            firstName: user.firstName ?? null,
+            lastName:  user.lastName  ?? null,
+        },
+    };
 }
