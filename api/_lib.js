@@ -30,15 +30,30 @@ export function json(res, status, body) {
  * Read a JSON body in a way that works on both Vercel (which pre-parses
  * application/json into req.body and drains the stream) and any other Node
  * runtime where the body is still a readable stream.
+ *
+ * @param {import('http').IncomingMessage} req
+ * @param {{ maxBytes?: number }} [opts]  — maxBytes defaults to 16 KiB.
+ *   Pass a larger value (e.g. 512 * 1024) for endpoints that accept input logs.
  */
-export async function readJsonBody(req) {
+export async function readJsonBody(req, opts) {
+    const maxBytes = (opts && opts.maxBytes) ? opts.maxBytes : 16 * 1024;
+
     // Vercel's @vercel/node runtime parses JSON bodies for us. If it already
     // ran, req.body is the parsed object (or string / Buffer for other types).
     const pre = req.body;
     if (pre !== undefined && pre !== null) {
-        if (typeof pre === 'object' && !Buffer.isBuffer(pre)) return pre;
+        if (typeof pre === 'object' && !Buffer.isBuffer(pre)) {
+            // Pre-parsed: check serialised size as a rough proxy for byte length.
+            // This is an approximation — the actual wire bytes may differ — but it
+            // is good enough to block absurdly large payloads that sneak through
+            // Vercel's body parser before we can check them.
+            const serialised = JSON.stringify(pre);
+            if (serialised.length > maxBytes) throw new Error('payload_too_large');
+            return pre;
+        }
         const text = Buffer.isBuffer(pre) ? pre.toString('utf8') : String(pre);
         if (!text) return {};
+        if (text.length > maxBytes) throw new Error('payload_too_large');
         try { return JSON.parse(text); } catch (_) { throw new Error('bad_json'); }
     }
 
@@ -47,7 +62,7 @@ export async function readJsonBody(req) {
         let buf = '';
         req.on('data', (chunk) => {
             buf += chunk;
-            if (buf.length > 16 * 1024) reject(new Error('payload_too_large'));
+            if (buf.length > maxBytes) reject(new Error('payload_too_large'));
         });
         req.on('end', () => {
             if (!buf) return resolve({});

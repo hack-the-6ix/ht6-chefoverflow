@@ -4,7 +4,8 @@
 //   1. Forward inbound Cookie header to HT6 /api/auth/check. Reject on non-200.
 //   2. Validate payload schema and HMAC signature on the run token.
 //   3. Recompute plausibility caps (per-second score, delivered, streak).
-//   4. Hand off to the submit_run RPC, which atomically locks the token row
+//   4. (B4) Server replay: decode input log and run simulate() to verify score.
+//   5. Hand off to the submit_run RPC, which atomically locks the token row
 //      and the leaderboard row for this email, enforces age + rate limit,
 //      claims the token, and does a best-only upsert.
 //
@@ -13,11 +14,22 @@
 // HT6 session being live).
 
 import { db, hmacToken, json, readJsonBody, timingSafeEqual, verifyHt6Session } from './_lib.js';
+import { simulate, defaultConfig, getCanonicalCounterIds } from '../sim/core.js';
+import { seedFromRunId } from '../sim/prng.js';
+import { buildStationTable, decodeInputLog } from '../sim/inputlog.js';
 
-const MAX_SCORE_PER_SEC = 250;
+// Fix #2: Lowered from 250 to 150 (interim value). The definitive number should
+// come from real-run telemetry collected with PLAUSIBILITY_MODE=log. With replay
+// validation (Tier B) enforced, this cap becomes a cheap pre-filter that rejects
+// garbage before the more expensive replay runs.
+const MAX_SCORE_PER_SEC = 150;
+// MAX_BURST can be revisited now that Fix #1 bounds total claimed time.
 const MAX_BURST = 1000;
 const MIN_RUN_SECONDS = 10;
 const MAX_RUN_SECONDS = 3600;
+// Fix #1: budget for network round-trip + client/server clock skew.
+// Must match the p_time_slack_ms default in the submit_run RPC.
+const TIME_SLACK_MS = 15 * 1000;
 // 110 min: leaves headroom for a full 60-min run plus an expired-HT6-session
 // re-login roundtrip (which can take many minutes if the user steps away).
 // Must stay >= MAX_RUN_SECONDS + slack, and < the 2h run_tokens cleanup window
@@ -27,11 +39,33 @@ const TOKEN_MIN_AGE_MS = MIN_RUN_SECONDS * 1000;
 const RATE_LIMIT_MS = 30 * 1000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Hard upper bound on input-log tuple count.  5000 events at 60 Hz = ~83 s of
+// continuous interactions — well above any real run.
+const MAX_INPUT_LOG_TUPLES = 5000;
+
+// Submit-score body can be up to 512 KiB to accommodate the input log.
+// All other endpoints keep the 16 KiB default.
+const SUBMIT_MAX_BYTES = 512 * 1024;
+
 // 'strict' (default): plausibility violations are rejected. This is the
 // fail-safe default — an unset/typo'd env var must not silently disable the
 // anti-cheat caps. Set PLAUSIBILITY_MODE=log explicitly to only log violations
 // (e.g. while tuning caps from real-run telemetry).
 const PLAUSIBILITY_MODE = process.env.PLAUSIBILITY_MODE === 'log' ? 'log' : 'strict';
+
+// REPLAY_MODE controls server-side replay validation.
+//   'shadow' (default / fail-safe): replay runs but mismatches only LOGGED,
+//             not rejected.  An unset or typo'd env var resolves to 'shadow'
+//             so validation is never silently skipped — it just doesn't reject.
+//   'strict': mismatch → 400 replay_mismatch; RPC uses server-recomputed values.
+//   'off':    replay is skipped entirely.  Must be set EXPLICITLY.
+const _rawReplayMode = process.env.REPLAY_MODE;
+const REPLAY_MODE = _rawReplayMode === 'off'    ? 'off'
+                  : _rawReplayMode === 'strict' ? 'strict'
+                  :                               'shadow';  // default / fail-safe
+
+// Canonical station table — built once at module load.
+const STATION_TABLE = buildStationTable(getCanonicalCounterIds());
 
 function isInt(n, min, max) {
     return typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max;
@@ -64,6 +98,24 @@ function rejectAndLog(res, status, reason, ctx) {
     return json(res, status, { error: reason, ...(ctx?.detail ? { detail: ctx.detail } : {}) });
 }
 
+/**
+ * Validate that `inputs` is an array of well-formed 3-integer tuples.
+ * Returns an error string if invalid, or null if ok.
+ * Hard-caps at MAX_INPUT_LOG_TUPLES.
+ */
+function validateInputTuples(inputs) {
+    if (!Array.isArray(inputs)) return 'not_array';
+    if (inputs.length > MAX_INPUT_LOG_TUPLES) return 'too_many_tuples';
+    for (let i = 0; i < inputs.length; i++) {
+        const t = inputs[i];
+        if (!Array.isArray(t) || t.length !== 3) return `tuple_${i}_not_3_array`;
+        if (!Number.isInteger(t[0]) || t[0] < 0) return `tuple_${i}_bad_delta`;
+        if (!Number.isInteger(t[1]) || t[1] < 0 || t[1] > 4) return `tuple_${i}_bad_chefId`;
+        if (!Number.isInteger(t[2]) || t[2] < 0) return `tuple_${i}_bad_code`;
+    }
+    return null;
+}
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
 
@@ -78,14 +130,15 @@ export default async function handler(req, res) {
     }
 
     // 2) Parse + validate payload.
+    // Use the larger byte cap to accommodate the input log.
     let body;
-    try { body = await readJsonBody(req); }
+    try { body = await readJsonBody(req, { maxBytes: SUBMIT_MAX_BYTES }); }
     catch (e) {
         const reason = e?.message === 'payload_too_large' ? 'payload_too_large' : 'bad_json';
         return rejectAndLog(res, 400, reason);
     }
 
-    const { run_id, token, email: clientEmail, score, streak, delivered, time_secs } = body;
+    const { run_id, token, email: clientEmail, score, streak, delivered, time_secs, inputs: rawInputs } = body;
 
     if (typeof run_id !== 'string' || run_id.length < 10 || run_id.length > 64)
         return rejectAndLog(res, 400, 'bad_run_id', { run_id_type: typeof run_id, run_id_len: typeof run_id === 'string' ? run_id.length : null });
@@ -99,6 +152,22 @@ export default async function handler(req, res) {
         return rejectAndLog(res, 400, 'bad_delivered', { delivered });
     if (!isInt(time_secs, MIN_RUN_SECONDS, MAX_RUN_SECONDS))
         return rejectAndLog(res, 400, 'bad_time', { time_secs });
+
+    // Validate the inputs field when replay is enabled.
+    // rawInputs may be absent (old clients / fallback runs) — treat as empty log.
+    let inputTuples = [];
+    if (REPLAY_MODE !== 'off') {
+        if (rawInputs !== undefined && rawInputs !== null) {
+            const tupleErr = validateInputTuples(rawInputs);
+            if (tupleErr) {
+                return rejectAndLog(res, 400, 'bad_inputs', { detail: tupleErr });
+            }
+            inputTuples = rawInputs;
+        }
+        // If rawInputs is absent (legacy client): inputTuples stays [].
+        // Replay will run with no events; mismatches will be logged in shadow or
+        // rejected in strict.
+    }
 
     // Email must come from HT6's user profile — client-typed email is ignored.
     if (!auth.user?.email) {
@@ -126,8 +195,8 @@ export default async function handler(req, res) {
         logReject(`would_reject_${v.reason}`, { ...v.ctx, mode: 'log' });
     }
 
-    // Server-authoritative grade. Client value is ignored.
-    const grade = gradeFromScore(score);
+    // Server-authoritative grade (may be overwritten by replay below in strict mode).
+    let grade = gradeFromScore(score);
 
     // 4) HMAC signature on the run token. We still need this in Node since the
     //    secret lives in env. The RPC just trusts that we verified it.
@@ -151,22 +220,114 @@ export default async function handler(req, res) {
         return rejectAndLog(res, 400, 'bad_signature', { issued_at: tokenRow.data.issued_at });
     }
 
-    // 5) Atomic claim + best-only upsert. The RPC re-fetches the token row
+    // 5) B4 — Server replay validation.
+    //
+    // Values to pass to the RPC.  In 'strict' mode these are overwritten with
+    // server-recomputed values so the leaderboard is authoritative.  In 'shadow'
+    // mode we keep the client values (parity not yet enforced) but log any diff.
+    let rpcScore     = score;
+    let rpcStreak    = streak;
+    let rpcDelivered = delivered;
+    let rpcTimeSecs  = time_secs;
+    let rpcGrade     = grade;
+
+    if (REPLAY_MODE !== 'off') {
+        // Derive replay ceiling from client-claimed time + a generous margin.
+        // Cap at 1.5 × MAX_RUN_SECONDS so a pathological large time_secs can't
+        // spin the server for minutes.
+        const TICK_HZ = 60;
+        const maxTicks = Math.min(
+            Math.ceil(time_secs * TICK_HZ * 1.1) + TICK_HZ * 30,
+            Math.ceil(MAX_RUN_SECONDS * TICK_HZ * 1.5),
+        );
+
+        let replaySummary = null;
+        let replayErr     = null;
+
+        try {
+            const seed       = seedFromRunId(run_id);
+            const decodedInputs = decodeInputLog(inputTuples, STATION_TABLE);
+            replaySummary = simulate({
+                seed,
+                config: defaultConfig(),
+                inputs: decodedInputs,
+                maxTicks,
+            });
+        } catch (e) {
+            replayErr = String(e?.message || e);
+        }
+
+        if (replayErr !== null) {
+            const ctx = { run_id, replay_error: replayErr, mode: REPLAY_MODE };
+            if (REPLAY_MODE === 'strict') {
+                return rejectAndLog(res, 400, 'replay_error', ctx);
+            }
+            // shadow: log and continue with client values
+            console.warn('[submit-score] replay_error', JSON.stringify(ctx));
+
+        } else {
+            // Compare server-recomputed vs client-claimed.
+            const serverScore     = Math.floor(replaySummary.score);
+            const serverDelivered = replaySummary.delivered;
+            const serverStreak    = replaySummary.bestStreak;
+
+            // Allow small floating-point drift on score (±1 point).
+            const scoreMismatch     = Math.abs(serverScore - score) > 1;
+            const deliveredMismatch = serverDelivered !== delivered;
+            const streakMismatch    = serverStreak    !== streak;
+
+            const hasMismatch = scoreMismatch || deliveredMismatch || streakMismatch;
+
+            if (hasMismatch) {
+                const diff = {
+                    score:     { server: serverScore,     client: score },
+                    delivered: { server: serverDelivered, client: delivered },
+                    streak:    { server: serverStreak,    client: streak },
+                };
+                const ctx = { run_id, diff, mode: REPLAY_MODE };
+
+                if (REPLAY_MODE === 'strict') {
+                    return rejectAndLog(res, 400, 'replay_mismatch', ctx);
+                }
+                // shadow: log and continue with client values
+                console.warn('[submit-score] would_reject_replay_mismatch', JSON.stringify(ctx));
+
+            } else {
+                // Replay succeeded and matches.
+                console.info('[submit-score] replay_ok', JSON.stringify({ run_id, server_score: serverScore, mode: REPLAY_MODE }));
+            }
+
+            // In strict mode: use server-recomputed authoritative values for the RPC.
+            if (REPLAY_MODE === 'strict') {
+                rpcScore     = serverScore;
+                rpcDelivered = serverDelivered;
+                rpcStreak    = serverStreak;
+                // Use client time_secs — the sim's time is bounded by maxTicks which
+                // we derived from time_secs, so it can't exceed what the token age check
+                // allows.  The RPC's p_time_slack_ms handles minor clock skew.
+                rpcTimeSecs  = time_secs;
+                rpcGrade     = gradeFromScore(serverScore);
+            }
+        }
+    }
+
+    // 6) Atomic claim + best-only upsert. The RPC re-fetches the token row
     //    under FOR UPDATE so we cannot lose a race against a concurrent submit.
     const rpc = await supabase.rpc('submit_run', {
         p_run_id:       run_id,
         p_email:        email,
-        p_score:        score,
-        p_grade:        grade,
-        p_streak:       streak,
-        p_delivered:    delivered,
-        p_time_secs:    time_secs,
+        p_score:        rpcScore,
+        p_grade:        rpcGrade,
+        p_streak:       rpcStreak,
+        p_delivered:    rpcDelivered,
+        p_time_secs:    rpcTimeSecs,
         p_ht6_user_id:  auth.user.userId    || null,
         p_first_name:   auth.user.firstName || null,
         p_last_name:    auth.user.lastName  || null,
-        p_min_age_ms:   TOKEN_MIN_AGE_MS,
-        p_max_age_ms:   TOKEN_MAX_AGE_MS,
+        p_min_age_ms:    TOKEN_MIN_AGE_MS,
+        p_max_age_ms:    TOKEN_MAX_AGE_MS,
         p_rate_limit_ms: RATE_LIMIT_MS,
+        p_time_slack_ms: TIME_SLACK_MS,   // Fix #1: bind claimed time_secs to token age
     });
 
     if (rpc.error) {

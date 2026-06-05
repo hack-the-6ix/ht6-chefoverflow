@@ -1,6 +1,140 @@
 // =============================================
 // AUTONOMOUS KITCHEN ARENA - Full Game
 // =============================================
+//
+// B2b: ES module — imports sim core.  SUPABASE_URL / SUPABASE_ANON_KEY are
+// classic-script globals defined in index.html before this module loads.
+// window.KitchenAPI is still exported for backward compat with agent scripts.
+//
+// Sim architecture ("preserve gameplay, sim validates"):
+//  • The client A* movement / boost / rendering are UNCHANGED.
+//  • A createSim() instance is the authoritative scorekeeper / order manager.
+//  • The sim runs at 60 Hz via a fixed-timestep accumulator in the game loop.
+//  • When interactWithStation() fires in the real game, we ALSO push an
+//    'interact' event to the sim (same tick) and append it to _inputLog.
+//  • score / orders / streak displayed to the user come from sim.getState().
+//  • At submit we encode _inputLog as compact tuples and POST it alongside
+//    run_id / token / email so the server can replay and verify.
+//
+// Seed timing:
+//  The sim must be seeded from run_id (server-controlled).  We kick off the
+//  run-token fetch at game start (startRun()); once it resolves we call
+//  _startSimWithSeed(run_id).  If the token never arrives we fall back to a
+//  local random seed — the game is still playable but the submission will be
+//  rejected server-side (no run token = no submit, same as before).
+
+import { createSim, simulate as simReplay, defaultConfig, getCanonicalCounterIds } from './sim/core.js';
+import { seedFromRunId } from './sim/prng.js';
+import { buildStationTable, encodeInputLog as _encodeInputLog, decodeInputLog as _decodeInputLog } from './sim/inputlog.js';
+
+// DEV flag: set true (or `?simDebug=1` in URL) to run the live-vs-replay
+// divergence check at game-over.
+const SIM_DEBUG = (typeof location !== 'undefined' && location.search.includes('simDebug=1'));
+
+// ============================================================
+// COMPACT INPUT LOG — wire format for submit payload
+// ============================================================
+// Each interaction is encoded as [tickDelta, chefId, stationCode].
+// tickDelta: ticks since previous event (first event: absolute tick).
+// stationCode: integer index into STATION_ID_TABLE below.
+//
+// Decoding (server-side):
+//   tick      = running sum of tickDeltas
+//   chefId    = tuple[1]
+//   stationId = STATION_ID_TABLE[tuple[2]]
+//   type      = 'interact'
+//
+// STATION_ID_TABLE ordering (server must use the same table):
+//   0–5:  bin_0 … bin_5
+//   6–8:  stove_0 … stove_2
+//   9–10: cutting_0 … cutting_1
+//  11–14: plating_0 … plating_3
+//  15–19: reception_0 … reception_4
+//      20: trash_0
+//  21–N: counter_0 … counter_N  (determined by map layout at station init time)
+//
+// 'boost' events are not included in the compact log (irrelevant to scoring).
+// Hard cap: at most INPUT_LOG_MAX_EVENTS entries; beyond that we stop recording
+// (the run becomes unsubmittable with replay, falling back to Tier A caps).
+const INPUT_LOG_MAX_EVENTS = 5000;
+
+// Station-id table — built once after stations are initialised.
+// Uses sim/inputlog.js as the single source of truth for encoding/decoding.
+// The counter ids are derived from getCanonicalCounterIds() (same map-scan as
+// sim/core.js buildStations) so client and server always use the same table.
+let _stationIdTable = [];  // populated by initInputLogTable()
+
+function initInputLogTable() {
+    _stationIdTable = buildStationTable(getCanonicalCounterIds());
+}
+
+/** Encode _inputLog (array of {tick,chefId,stationId}) to compact tuples. */
+function encodeInputLog(log) {
+    return _encodeInputLog(log, _stationIdTable);
+}
+
+/** Decode compact tuples back to event objects (used in dev self-check). */
+function decodeInputLog(tuples) {
+    return _decodeInputLog(tuples, _stationIdTable);
+}
+
+// ============================================================
+// SIM STATE
+// ============================================================
+let _sim         = null;   // current createSim() instance (null until seed ready)
+let _simSeed     = null;   // uint32 seed used to create _sim
+let _simReady    = false;  // true once _sim is initialised with a real run_id seed
+let _inputLog    = [];     // raw events: { tick, chefId, stationId }
+let _simTick     = 0;      // ticks stepped so far (for input stamping)
+let _dtAccum     = 0;      // fixed-timestep accumulator (seconds)
+const _SIM_DT    = 1 / 60; // fixed timestep
+
+/** Push one interaction to the sim and record it in the input log. */
+function _pushSimInteract(chefId, stationId) {
+    if (!_sim) return;
+    if (_inputLog.length < INPUT_LOG_MAX_EVENTS) {
+        const ev = { tick: _simTick, chefId, stationId };
+        _inputLog.push(ev);
+        // Apply to live sim immediately at current tick.
+        // (The sim's step() has already been called for this tick, so the
+        // event lands in the *next* step.  We call the internal stepWithEvent
+        // pattern by injecting directly: pass the event in the next step call
+        // by queuing it on _pendingSimEvents.)
+        _pendingSimEvents.push(ev);
+    }
+}
+
+// Events queued for the next sim.step() call (injected by _pushSimInteract).
+let _pendingSimEvents = [];
+
+/** Advance the sim by accumulated real time, injecting any queued events. */
+function _tickSim(realDt) {
+    if (!_sim) return;
+    _dtAccum += realDt;
+    while (_dtAccum >= _SIM_DT) {
+        _dtAccum -= _SIM_DT;
+        // Pull events stamped for this exact tick.
+        const eventsThisTick = _pendingSimEvents.filter(e => e.tick === _simTick);
+        _pendingSimEvents = _pendingSimEvents.filter(e => e.tick !== _simTick);
+        _sim.step(eventsThisTick);
+        _simTick++;
+    }
+}
+
+/**
+ * Start the sim with a seed.  Called once run_id is known.
+ * If called a second time (game restart), resets all sim state.
+ */
+function _startSimWithSeed(seed) {
+    _simSeed   = seed;
+    _sim       = createSim({ seed, config: defaultConfig() });
+    _simReady  = true;
+    _simTick   = 0;
+    _dtAccum   = 0;
+    _inputLog  = [];
+    _pendingSimEvents = [];
+    console.info('[sim] started with seed', seed.toString(16));
+}
 
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
@@ -885,6 +1019,15 @@ for (let y = 0; y < MAP_HEIGHT; y++) {
     }
 }
 
+// B2b: build the station-id → integer-code table used for compact log encoding.
+// Called once here after all stations are populated.
+initInputLogTable();
+
+// Set of order IDs that the client has already removed (on delivery / expiry)
+// but the sim hasn't confirmed yet.  _syncFromSim uses this to avoid re-adding
+// orders that are in the sim's queue but already gone client-side.
+const _clientRemovedOrderIds = new Set();
+
 // =============================================
 // CHEFS
 // =============================================
@@ -1223,7 +1366,14 @@ function getStationAt(x, y) {
 
 function interactWithStation(chef, stationInfo) {
     const { type, station } = stationInfo;
-    
+
+    // B2b: emit an 'interact' event to the sim BEFORE applying the local effect.
+    // The sim applies it immediately at the current simTick.  The local client
+    // effect still runs below for rendering / gameplay feel.
+    if (station && station.id) {
+        _pushSimInteract(chef.id, station.id);
+    }
+
     switch (type) {
         case 'ingredientBin':
             // Pick up ingredient
@@ -1372,21 +1522,27 @@ function interactWithStation(chef, stationInfo) {
             if (chef.holding && chef.holding.type === 'plate' && station.order) {
                 const success = checkDelivery(chef.holding, station.order);
                 if (success) {
+                    // B2b: score / streak / ordersDelivered are now authoritative
+                    // from the sim (_syncFromSim overwrites them each frame).
+                    // Compute a local estimate for the floating-text display so
+                    // the player sees a score pop-up immediately (before the next
+                    // _syncFromSim).  This estimate may differ slightly from the
+                    // sim's value (different timeLeft snapshot), but the FINAL
+                    // submitted score always comes from the sim.
                     const timeBonus = Math.floor(station.order.timeLeft * 2);
                     const baseScore = 100 * GameState.difficulty;
                     const streakMultiplier = 1 + Math.min(1.0, GameState.streak * 0.05);
                     const vipMultiplier = station.order.vip ? 1.5 : 1;
-                    const totalScore = Math.floor((baseScore + timeBonus) * streakMultiplier * vipMultiplier);
-                    ScoreGuard.applyDelta(totalScore, 'delivery');
-                    GameState.streak += 1;
-                    GameState.bestStreak = Math.max(GameState.bestStreak, GameState.streak);
-                    GameState.ordersDelivered += 1;
+                    const estimatedScore = Math.floor((baseScore + timeBonus) * streakMultiplier * vipMultiplier);
 
                     const vipTag = station.order.vip ? ' VIP' : '';
-                    showFloatingText(station.x, station.y, `+${totalScore}!${vipTag}`, '#4caf50', { kind: 'score', fontSize: 22 });
+                    showFloatingText(station.x, station.y, `+${estimatedScore}!${vipTag}`, '#4caf50', { kind: 'score', fontSize: 22 });
 
-                    // Start customer eating lifecycle
+                    // Client-side order cleanup (visual only; sim will confirm via _syncFromSim).
+                    // Track the removed ID so _syncFromSim doesn't re-add it before
+                    // the sim processes the delivery event next frame.
                     const deliveredOrder = station.order;
+                    _clientRemovedOrderIds.add(deliveredOrder.id);
                     station.order = null;
                     const orderIndex = orders.indexOf(deliveredOrder);
                     if (orderIndex > -1) orders.splice(orderIndex, 1);
@@ -1395,13 +1551,12 @@ function interactWithStation(chef, stationInfo) {
                     EventBus.emit('orderDelivered', {
                         id: deliveredOrder.id,
                         dish: deliveredOrder.dish,
-                        score: totalScore,
-                        streak: GameState.streak
+                        score: estimatedScore,
+                        streak: GameState.streak + 1, // +1 optimistic estimate
                     });
                 } else {
                     EventBus.emit('orderFailed', { dish: station.order.dish });
                     showFloatingText(station.x, station.y, 'Wrong dish!', '#f44336', { kind: 'error' });
-                    GameState.streak = 0;
                 }
                 chef.holding = null;
             }
@@ -1530,6 +1685,9 @@ function gameLoop(currentTime) {
     lastTime = currentTime;
 
     if (GameState.running && !GameState.paused) {
+        // B2b: advance the sim at fixed 60Hz timestep using the accumulated real dt.
+        // The sim is the authoritative scorekeeper; its state is read in update() below.
+        _tickSim(deltaTime);
         update(deltaTime);
     }
 
@@ -1537,11 +1695,136 @@ function gameLoop(currentTime) {
     requestAnimationFrame(gameLoop);
 }
 
+// ============================================================
+// B2b: Sim→GameState sync helpers
+// ============================================================
+
+/**
+ * _syncFromSim() — pull authoritative state from the sim into GameState and
+ * the client's orders / receptionStands arrays so what the player SEES matches
+ * what the sim SCORES.
+ *
+ * Called once per animation frame AFTER _tickSim() has been called.
+ *
+ * Score / streak / delivered / failedOrders / rush: overwritten from sim.
+ * Orders: merged by order.id — new sim orders are added, expired ones removed.
+ * Reception stands: matched to sim's order list so station.order is consistent.
+ *
+ * Chef x/y / holding / path remain client-owned — not touched here.
+ */
+function _syncFromSim() {
+    if (!_sim) return;
+    const ss = _sim.getState();
+
+    // 1. Authoritative scalar state
+    GameState.score       = ss.score;
+    GameState.streak      = ss.streak;
+    GameState.bestStreak  = ss.bestStreak;
+    GameState.difficulty  = ss.difficulty;
+    GameState.failedOrders  = ss.failedOrders;
+    GameState.ordersDelivered = ss.ordersDelivered;
+    GameState.rush.active   = ss.rush.active;
+    GameState.rush.timeLeft = ss.rush.timeLeft;
+    GameState.rush.cooldown = ss.rush.cooldown;
+    // time: client owns the elapsed wall-clock time for display;
+    // sim time tracks via fixed-step accumulator.  We use sim time here for
+    // consistency (sim is authoritative for scoring phases).
+    GameState.time = ss.time;
+
+    // 2. Orders: merge sim order list into client's `orders` array and
+    //    reception stands.  We match by order.id where possible.
+    const simOrderIds = new Set(ss.orders.map(o => o.id));
+
+    // Clean up _clientRemovedOrderIds for orders the sim has also removed.
+    // Once the sim confirms removal we no longer need to suppress re-addition.
+    for (const id of _clientRemovedOrderIds) {
+        if (!simOrderIds.has(id)) {
+            _clientRemovedOrderIds.delete(id);
+        }
+    }
+
+    // Remove orders that the sim no longer has (expired / delivered) and weren't
+    // already removed by the client.
+    for (let i = orders.length - 1; i >= 0; i--) {
+        if (!simOrderIds.has(orders[i].id)) {
+            const expiredOrder = orders[i];
+            // Show "expired" floating text only if the client didn't already handle it.
+            if (!_clientRemovedOrderIds.has(expiredOrder.id)) {
+                const stand = stations.receptionStands.find(s => s.order === expiredOrder);
+                if (stand) {
+                    showFloatingText(stand.x, stand.y, 'Order expired!', '#f44336');
+                    EventBus.emit('orderExpired', {
+                        id: expiredOrder.id,
+                        dish: expiredOrder.dish,
+                        standId: expiredOrder.standId,
+                    });
+                }
+            }
+            // Clear from reception stand
+            const stand = stations.receptionStands.find(s => s.order === expiredOrder);
+            if (stand) stand.order = null;
+            orders.splice(i, 1);
+        }
+    }
+
+    // Add / update orders from sim
+    for (const so of ss.orders) {
+        // Skip orders the client already removed but the sim hasn't confirmed yet.
+        if (_clientRemovedOrderIds.has(so.id)) continue;
+
+        let clientOrder = orders.find(o => o.id === so.id);
+        if (!clientOrder) {
+            // New order from sim — create a client-side proxy
+            const recipeData = RECIPES[so.dish];
+            clientOrder = {
+                id:       so.id,
+                dish:     so.dish,
+                icon:     RECIPE_ICON_BY_NAME ? (RECIPE_ICON_BY_NAME[so.dish] || 'ORD') : 'ORD',
+                recipe:   recipeData || { components: [], difficulty: 1 },
+                timeLeft: so.timeLeft,
+                maxTime:  so.maxTime,
+                vip:      so.vip,
+                standId:  so.standId,
+            };
+            orders.push(clientOrder);
+            // Place on the right reception stand
+            const stand = stations.receptionStands.find(s => s.id === so.standId);
+            if (stand && !stand.order && !stand.customer) stand.order = clientOrder;
+            EventBus.emit('orderSpawned', {
+                id: clientOrder.id,
+                dish: clientOrder.dish,
+                timeLeft: clientOrder.timeLeft,
+                standId: clientOrder.standId,
+                components: (recipeData && recipeData.components)
+                    ? recipeData.components.map(c => ({ ingredient: c.ingredient, state: c.state }))
+                    : [],
+            });
+        } else {
+            // Update mutable fields (timeLeft is authoritative from sim)
+            clientOrder.timeLeft = so.timeLeft;
+            clientOrder.vip      = so.vip;
+        }
+    }
+
+    // 3. gameOver propagation
+    if (ss.gameOver && GameState.running && !GameState.gameOver) {
+        endGame();
+    }
+}
+
 function update(dt) {
-    GameState.time += dt;
+    // B2b: most scoring state now comes from _syncFromSim() which runs AFTER
+    // _tickSim() in the game loop.  We still run the client-side subsystems
+    // (A* movement, station timers, floating texts) for gameplay feel.
+    //
+    // NOTE: order spawning and order lifecycle (timeLeft decay, expiry) are now
+    // handled by the sim; the client-side spawnOrder() / updateOrders() paths
+    // below are bypassed — state comes from _syncFromSim() instead.
 
-    GameState.difficulty = computeDifficulty(GameState.time);
+    // Pull authoritative state from the sim first.
+    _syncFromSim();
 
+    // Phase banners (visual only, driven by GameState.time which is now sim time)
     if (!GameState.phaseBanner60 && GameState.time >= 60) {
         GameState.phaseBanner60 = true;
         showFloatingText(10, 7, 'PHASE UP: PICKING UP THE PACE!', '#ffeb3b', { fontSize: 28, life: 3, maxLife: 3, drift: 0, kind: 'phase' });
@@ -1555,76 +1838,36 @@ function update(dt) {
         showFloatingText(10, 7, 'ENDURANCE MODE', '#ffc107', { fontSize: 28, life: 4, maxLife: 4, drift: 0, kind: 'phase' });
     }
 
-    if (GameState.time >= 600) {
-        ScoreGuard.applyDelta(dt * GameState.difficulty, 'endurance-tick');
+    // ScoreGuard: repurposed as a cheap event counter / client self-check.
+    // It no longer drives GameState.score (sim does); applyDelta is called with
+    // the sim score delta so the receipt event count stays meaningful.
+    // endurance-tick delta is handled inside the sim — no separate applyDelta call.
+
+    // Rush banner (visual only — rush state synced from sim above)
+    const _wasRushActive = GameState.rush.active;
+    // (rush state already updated from sim; show banner when it first activates)
+    if (!_prevRushActive && GameState.rush.active) {
+        showFloatingText(12, 2, 'RUSH HOUR!', '#ffd54f');
     }
+    _prevRushActive = GameState.rush.active;
 
-    const phase = getPhaseKey(GameState.time);
-
-    if (GameState.rush.active) {
-        GameState.rush.timeLeft -= dt;
-        if (GameState.rush.timeLeft <= 0) {
-            GameState.rush.active = false;
-            GameState.rush.cooldown = isHighPressurePhase(phase)
-                ? 15 + Math.random() * 5
-                : 30 + Math.random() * 25;
-        }
-    } else {
-        GameState.rush.cooldown -= dt;
-        if (GameState.rush.cooldown <= 0) {
-            GameState.rush.active = true;
-            GameState.rush.timeLeft = isHighPressurePhase(phase)
-                ? 12 + Math.random() * 8
-                : 10 + Math.random() * 6;
-            showFloatingText(12, 2, 'RUSH HOUR!', '#ffd54f');
-
-            // Burst: spawn up to 3 orders at once, clamped to free stands.
-            const freeStands = stations.receptionStands.filter(standFreeForOrder).length;
-            const burstTarget = Math.min(3, freeStands);
-            let burstSpawned = 0;
-            for (let i = 0; i < burstTarget; i++) {
-                if (spawnOrder()) burstSpawned++;
-                else break;
-            }
-            if (burstSpawned > 0) {
-                EventBus.emit('rushBurst', { count: burstSpawned });
-            }
-        }
-    }
-
-    refillUpcomingQueue();
-    const spawnEvery = baseOrderSpawnInterval(GameState.time, GameState.rush.active);
-    GameState.orderSpawnDebt += dt / spawnEvery;
-    let spawnsThisFrame = 0;
-    const maxSpawnsPerFrame = 2;
-    while (GameState.orderSpawnDebt >= 1 && spawnsThisFrame < maxSpawnsPerFrame) {
-        if (!spawnOrder()) {
-            break;
-        }
-        GameState.orderSpawnDebt -= 1;
-        spawnsThisFrame++;
-    }
-    recomputeUpcomingEtas();
-    
-    // Update chefs
+    // Update chefs (A* movement — client-owned)
     rebuildReservations();
     for (const chef of chefs) {
         updateChef(chef, dt);
     }
-    
-    // Update stations
+
+    // Update stations (stove/cutting timers — client-owned for visual accuracy)
     updateStations(dt);
-    
-    // Update orders
-    updateOrders(dt);
-    
-    // Update floating texts
+
+    // NOTE: updateOrders() is NOT called here — order lifecycle (timeLeft, expiry)
+    // is managed by the sim and mirrored via _syncFromSim() above.
+
+    // Update floating texts (visual only)
     updateFloatingTexts(dt);
-    
-    // Check game over
-    if (GameState.failedOrders >= GameState.maxFailedOrders) {
-        endGame();
-    }
+
+    // Recompute upcoming ETAs for the KitchenAPI (visual display, no scoring)
+    recomputeUpcomingEtas();
 
     const apiPhase = getApiPhase(GameState.time);
     if (apiPhase !== lastEmittedPhase) {
@@ -1634,10 +1877,13 @@ function update(dt) {
 
     EventBus.emit('tick', { dt, time: GameState.time });
     ScoreGuard.tick(GameState.time);
-    
+
     // Update UI
     updateUI();
 }
+
+// Track previous rush state for banner trigger (since rush state comes from sim now)
+let _prevRushActive = false;
 
 function updateChef(chef, dt) {
     if (chef.boostCooldown > 0) {
@@ -1758,36 +2004,12 @@ function updateStations(dt) {
     }
 }
 
-function updateOrders(dt) {
-    for (let i = orders.length - 1; i >= 0; i--) {
-        orders[i].timeLeft -= dt;
-        
-        if (orders[i].timeLeft <= 0) {
-            // Order expired
-            const expired = orders[i];
-            EventBus.emit('orderExpired', {
-                id: expired.id,
-                dish: expired.dish,
-                standId: expired.standId
-            });
-
-            GameState.failedOrders++;
-            ScoreGuard.applyDelta(-50, 'order-expired');
-            GameState.streak = 0;
-            
-            showFloatingText(
-                stations.receptionStands.find(s => s.order === expired)?.x || 17,
-                stations.receptionStands.find(s => s.order === expired)?.y || 6,
-                'Order expired!', '#f44336'
-            );
-            
-            // Clear from stand
-            const stand = stations.receptionStands.find(s => s.order === expired);
-            if (stand) stand.order = null;
-            
-            orders.splice(i, 1);
-        }
-    }
+// B2b: updateOrders() is NO LONGER called from update().
+// Order lifecycle (timeLeft decay, expiry, failedOrders, streak reset) is now
+// handled inside the sim and mirrored into the client via _syncFromSim().
+// This function is kept for reference but is dead code.
+function updateOrders(dt) { // eslint-disable-line no-unused-vars
+    // dead — see _syncFromSim()
 }
 
 // =============================================
@@ -2625,6 +2847,13 @@ function startRun() {
 // start, network blip) must not silently doom an entire winning run that can
 // never be submitted. A token issued a few seconds into a run is still older
 // than the server's 10s min-age gate by the time any real run ends.
+//
+// Seed timing (B2b): the deterministic sim MUST run under a seed derived from
+// run_id so the server can replay identically.  We start the sim with the real
+// seed the moment run_id is received (even if that's a few seconds into the run).
+// If no token is ever obtained we fall back to a local random seed — the game
+// is still fully playable, but the submission will be rejected server-side
+// (no run token → no submit, same behaviour as before this change).
 async function _issueRunToken(attempt) {
     try {
         const res = await fetch(`${_fnBase}/start-run`, {
@@ -2637,6 +2866,15 @@ async function _issueRunToken(attempt) {
             if (data && data.run_id && data.token) {
                 _runToken = { run_id: data.run_id, token: data.token };
                 setLeaderboardOffline(false);
+                // B2b: (re)start the sim with the server-controlled seed derived
+                // from run_id so server replay will be deterministically identical.
+                // If the game is still running and the sim hasn't been seeded yet
+                // with this run_id, reset now.  Events emitted before the seed
+                // arrived are discarded — they're the first few seconds of play
+                // and the sim will re-spawn orders from tick 0 anyway.
+                if (GameState.running && !GameState.gameOver) {
+                    _startSimWithSeed(seedFromRunId(data.run_id));
+                }
                 return;
             }
         }
@@ -2793,13 +3031,21 @@ async function _submitVerifiedScoreImpl() {
         return;
     }
 
+    // B2b: use sim-authoritative summary for the submitted values.
+    // If the sim is available use its summary; otherwise fall back to GameState
+    // (e.g. if the run was restored from localStorage after an OAuth redirect).
+    let simSummary = null;
+    if (_sim) {
+        simSummary = _sim.summary();
+    }
+
     const entry = {
         email,
-        score: Math.max(0, Math.floor(GameState.score)),
-        grade: gradeFromScore(GameState.score).letter,
-        streak: GameState.bestStreak,
-        delivered: GameState.ordersDelivered,
-        time_secs: Math.floor(GameState.time),
+        score:     Math.max(0, Math.floor(simSummary ? simSummary.score     : GameState.score)),
+        grade:     gradeFromScore(simSummary ? simSummary.score : GameState.score).letter,
+        streak:    simSummary ? simSummary.bestStreak : GameState.bestStreak,
+        delivered: simSummary ? simSummary.delivered  : GameState.ordersDelivered,
+        time_secs: Math.floor(simSummary ? simSummary.time_secs : GameState.time),
     };
 
     // Always save locally as fallback (private to this browser, doesn't affect global board).
@@ -2814,6 +3060,39 @@ async function _submitVerifiedScoreImpl() {
         return;
     }
 
+    // B2b: encode the input log as compact tuples for replay validation.
+    // Wire format: array of [tickDelta, chefId, stationCode].
+    // The server (B4) will decode this and replay via simulate() to verify.
+    // See the COMPACT WIRE FORMAT comment near the top of this file.
+    const compactLog = encodeInputLog(_inputLog);
+
+    // DEV self-check: at game-over compare live sim summary to a fresh simulate()
+    // over the recorded log to catch any divergence before submission.
+    if (SIM_DEBUG && _simSeed !== null && compactLog.length > 0) {
+        try {
+            const replayInputs = decodeInputLog(compactLog);
+            const replayResult = simReplay({
+                seed: _simSeed,
+                config: defaultConfig(),
+                inputs: replayInputs,
+                maxTicks: _simTick + 120, // a little past where we stopped
+            });
+            const live = _sim.summary();
+            const match = (
+                Math.floor(live.score)    === Math.floor(replayResult.score) &&
+                live.delivered            === replayResult.delivered          &&
+                live.bestStreak           === replayResult.bestStreak
+            );
+            console[match ? 'info' : 'warn'](
+                '[sim-debug] live vs replay:', match ? 'MATCH' : 'MISMATCH',
+                '\n  live:   ', live,
+                '\n  replay: ', replayResult,
+            );
+        } catch (e) {
+            console.warn('[sim-debug] replay check failed:', e);
+        }
+    }
+
     statusEl.textContent = 'Submitting…';
     try {
         const res = await fetch(`${_fnBase}/submit-score`, {
@@ -2823,6 +3102,9 @@ async function _submitVerifiedScoreImpl() {
                 run_id: _runToken.run_id,
                 token: _runToken.token,
                 ...entry,
+                // B2b: compact input log for server replay validation (B4).
+                // See COMPACT WIRE FORMAT comment for encoding details.
+                inputs: compactLog,
             }),
         });
         const data = await res.json().catch(() => ({}));
@@ -2836,12 +3118,17 @@ async function _submitVerifiedScoreImpl() {
                 token_used: 'This run has already been submitted.',
                 token_expired: 'Run expired. Start a new game to submit.',
                 too_fast: 'Run too short to submit. Play for at least 10 seconds.',
+                time_exceeds_elapsed: 'Run rejected: reported time exceeds elapsed time.',
+                token_foreign: 'This run token belongs to a different account.',
                 unknown_token: 'Run not recognized. Refresh and play a fresh game.',
                 bad_signature: 'Run token invalid. Refresh and play a fresh game.',
                 // Plausibility
                 implausible_score: 'Run rejected: score outside plausible range.',
                 implausible_delivered: 'Run rejected: delivery count not plausible.',
                 implausible_streak: 'Run rejected: streak not plausible.',
+                // Replay validation (B4)
+                replay_mismatch: 'Run rejected: server replay did not match submitted score. Ensure you are on the latest game version.',
+                replay_error: 'Server could not validate this run. Try again or contact support.',
                 // Schema validation (should never fire from the official client)
                 bad_json: 'Submission body was malformed. Refresh the page.',
                 payload_too_large: 'Submission body was too large. Refresh the page.',
@@ -3220,7 +3507,16 @@ function startGame() {
     ScoreGuard.reset();
     // A fresh run supersedes any persisted end screen from a prior game.
     try { localStorage.removeItem(PENDING_RUN_KEY); } catch (_) {}
-    startRun();
+
+    // B2b: start the sim immediately with a temporary local seed so the game
+    // is playable from tick 0.  _issueRunToken() will replace it with the real
+    // server-derived seed as soon as run_id arrives (within the first retry).
+    // Using a local random seed here is acceptable — if the run_id never arrives
+    // the submit will be rejected (no token), matching prior behaviour.
+    const fallbackSeed = (Math.random() * 0xFFFFFFFF) >>> 0;
+    _startSimWithSeed(fallbackSeed);
+
+    startRun(); // async — will call _startSimWithSeed(seedFromRunId(run_id)) on success
     GameState.difficulty = 1.0;
     GameState.streak = 0;
     GameState.bestStreak = 0;
@@ -3238,7 +3534,9 @@ function startGame() {
     GameState.rush.cooldown = 20;
     GameState.orderSpawnDebt = 0;
     GameState.upcomingOrders = [];
-    refillUpcomingQueue();
+    // B2b: refillUpcomingQueue / spawnOrder no longer needed here — the sim
+    // manages order spawning deterministically.  The setTimeout spawns are also
+    // removed; the sim's debt system handles early orders.
 
     // Reset stations
     stations.stoves.forEach(s => { s.cooking = null; s.cookTime = 0; s.busy = false; });
@@ -3246,16 +3544,14 @@ function startGame() {
     stations.platingAreas.forEach(s => { s.items = []; s.busy = false; });
     stations.counters.forEach(s => { s.items = []; });
     stations.receptionStands.forEach(s => { s.order = null; s.customer = null; });
-    
+
     orders.length = 0;
     orderIdCounter = 0;
     floatingTexts.length = 0;
-    
+    _prevRushActive = false;
+    _clientRemovedOrderIds.clear();
+
     initChefs();
-    
-    // Spawn initial orders
-    setTimeout(() => spawnOrder(), 1000);
-    setTimeout(() => spawnOrder(), 3000);
     
     document.getElementById('start-btn').disabled = true;
     document.getElementById('pause-btn').disabled = false;
@@ -3283,6 +3579,20 @@ function gradeFromScore(score) {
 function endGame() {
     GameState.running = false;
     GameState.gameOver = true;
+
+    // B2b: sync final state from sim before displaying.
+    // _syncFromSim() has already been called in the last update() tick, but call
+    // it once more to ensure the very last sim step is reflected.
+    if (_sim) {
+        const ss = _sim.getState();
+        GameState.score           = ss.score;
+        GameState.bestStreak      = ss.bestStreak;
+        GameState.ordersDelivered = ss.ordersDelivered;
+        GameState.failedOrders    = ss.failedOrders;
+        GameState.difficulty      = ss.difficulty;
+        GameState.time            = ss.time;
+    }
+
     EventBus.emit('gameOver', {
         score: GameState.score,
         time: GameState.time,
@@ -3307,7 +3617,37 @@ function endGame() {
     if (fdiff) fdiff.textContent = GameState.difficulty.toFixed(1);
     const receipt = document.getElementById('run-receipt');
     if (receipt) {
-        receipt.textContent = `Run proof: ${ScoreGuard.receipt()}`;
+        // B2b: ScoreGuard.receipt() now shows event count as a cheap client check
+        // (not a security mechanism — replay is the real check).
+        receipt.textContent = `Run proof: ${ScoreGuard.receipt()} | events:${_inputLog.length}`;
+    }
+
+    // B2b DEV: console-log live vs replay comparison at game-over.
+    if (SIM_DEBUG && _simSeed !== null) {
+        try {
+            const compactLog = encodeInputLog(_inputLog);
+            const replayInputs = decodeInputLog(compactLog);
+            const replayResult = simReplay({
+                seed: _simSeed,
+                config: defaultConfig(),
+                inputs: replayInputs,
+                maxTicks: _simTick + 120,
+            });
+            const live = _sim.summary();
+            const match = (
+                Math.floor(live.score) === Math.floor(replayResult.score) &&
+                live.delivered         === replayResult.delivered          &&
+                live.bestStreak        === replayResult.bestStreak
+            );
+            console[match ? 'info' : 'warn'](
+                '[sim-debug] endGame live vs replay:', match ? 'MATCH ✓' : 'MISMATCH ✗',
+                '\n  live:   ', live,
+                '\n  replay: ', replayResult,
+                '\n  inputLog length:', _inputLog.length,
+            );
+        } catch (e) {
+            console.warn('[sim-debug] endGame replay check failed:', e);
+        }
     }
     const status = document.getElementById('leaderboard-status');
     if (status) status.textContent = '';
