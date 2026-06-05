@@ -952,6 +952,16 @@ export function createSim({ seed, config = {} }) {
         spawnsThisFrame++;
       }
 
+      // Initial early spawns — deterministically replicate game.js startGame()'s
+      // setTimeout(spawnOrder, 1000) and setTimeout(spawnOrder, 3000).  Without
+      // these the early-game spawn interval (~20 s) leaves the kitchen EMPTY for
+      // the first ~19 s, which looks like "no orders / broken".  These are extra
+      // spawns on top of the debt cadence (they do not consume orderSpawnDebt),
+      // fired at fixed ticks so client and server replay identically.
+      if (gs.tick === 60 || gs.tick === 180) {
+        spawnOrder(gs, stations, rng);
+      }
+
       // Update chefs
       for (const chef of chefs) {
         updateChef(chef, DT);
