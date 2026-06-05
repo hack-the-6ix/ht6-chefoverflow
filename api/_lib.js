@@ -95,22 +95,23 @@ const AUTH_CHECK_TIMEOUT_MS = 3000;
 /**
  * Verify the HT6 session and resolve the authenticated user's profile.
  *
- * Single source of truth: GET /api/action/profile returns the CURRENT caller's
- * own user record (`fetchUser(req.executor)` on the HT6 backend). This is the
- * only correct way to identify the caller.
+ * Single source of truth: GET /api/users/me returns the CURRENT caller's own
+ * user record, e.g.
+ *   { userId, email, firstName, lastName, roles, ... }
+ * This is the only correct way to identify the caller.
  *
  * History/why: we used to derive the userId from
  * `/api/seasons/{code}/responses` -> data[0].userId. That endpoint is NOT
  * scoped to the caller for privileged accounts (organizers/admins see ALL
  * applicants), so data[0] was a *random other applicant* — we then fetched and
  * trusted that person's email/name. That impersonation bug is why this now
- * goes straight to /action/profile.
+ * goes straight to /api/users/me.
  *
  * Returns { ok: boolean, status, user? } where user has { email, userId,
  * firstName, lastName } drawn entirely from HT6's database — never from the
  * client request body.
- *   401 -> signed out;  403 -> signed in but not permitted to fetch a hacker
- *   profile;  502/504 -> upstream error/timeout.
+ *   401 -> signed out;  403 -> signed in but not permitted;
+ *   502/504 -> upstream error/timeout.
  */
 export async function verifyHt6Session(req) {
     const cookie = req.headers['cookie'];
@@ -124,7 +125,7 @@ export async function verifyHt6Session(req) {
 
     let body;
     try {
-        const res = await fetch(`${HT6_API_URL}/api/action/profile`, {
+        const res = await fetch(`${HT6_API_URL}/api/users/me`, {
             method: 'GET',
             headers: ht6Headers,
             signal: AbortSignal.timeout(AUTH_CHECK_TIMEOUT_MS),
@@ -138,8 +139,8 @@ export async function verifyHt6Session(req) {
         return { ok: false, status };
     }
 
-    // HT6 wraps payloads inconsistently ({ message }, { data }, or raw).
-    // Unwrap defensively and take the single user object.
+    // /api/users/me returns the user object directly; unwrap defensively in case
+    // an envelope ({ message } / { data }) is ever added upstream.
     let user = body?.message ?? body?.data ?? body;
     if (Array.isArray(user)) user = user[0];
     if (!user || typeof user.email !== 'string') return { ok: false, status: 502 };
@@ -149,7 +150,7 @@ export async function verifyHt6Session(req) {
         status: 200,
         user: {
             email:     user.email,
-            userId:    user._id ?? user.userId ?? null,
+            userId:    user.userId ?? user._id ?? null,
             firstName: user.firstName ?? null,
             lastName:  user.lastName  ?? null,
         },
