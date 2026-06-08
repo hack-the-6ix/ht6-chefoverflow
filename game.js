@@ -3128,6 +3128,7 @@ async function _submitVerifiedScoreImpl() {
                 implausible_streak: 'Run rejected: streak not plausible.',
                 // Replay validation (B4)
                 replay_mismatch: 'Run rejected: server replay did not match submitted score. Ensure you are on the latest game version.',
+                replay_unreachable: 'Run rejected: the recorded chef movement was physically impossible. Ensure you are on the latest game version.',
                 replay_error: 'Server could not validate this run. Try again or contact support.',
                 // Schema validation (should never fire from the official client)
                 bad_json: 'Submission body was malformed. Refresh the page.',

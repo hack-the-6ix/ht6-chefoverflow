@@ -54,15 +54,31 @@ const SUBMIT_MAX_BYTES = 512 * 1024;
 const PLAUSIBILITY_MODE = process.env.PLAUSIBILITY_MODE === 'log' ? 'log' : 'strict';
 
 // REPLAY_MODE controls server-side replay validation.
-//   'shadow' (default / fail-safe): replay runs but mismatches only LOGGED,
-//             not rejected.  An unset or typo'd env var resolves to 'shadow'
-//             so validation is never silently skipped — it just doesn't reject.
-//   'strict': mismatch → 400 replay_mismatch; RPC uses server-recomputed values.
-//   'off':    replay is skipped entirely.  Must be set EXPLICITLY.
+//   'strict' (default / fail-safe): mismatch → 400 replay_mismatch; RPC uses
+//             server-recomputed values. An unset or typo'd env var resolves to
+//             'strict' so the anti-cheat is never silently disabled — the
+//             non-enforcing modes below must be set EXPLICITLY.
+//   'shadow': replay runs but mismatches are only LOGGED, not rejected. For
+//             tuning caps / collecting telemetry; client values are kept.
+//   'off':    replay is skipped entirely.
 const _rawReplayMode = process.env.REPLAY_MODE;
 const REPLAY_MODE = _rawReplayMode === 'off'    ? 'off'
-                  : _rawReplayMode === 'strict' ? 'strict'
-                  :                               'shadow';  // default / fail-safe
+                  : _rawReplayMode === 'shadow' ? 'shadow'
+                  :                               'strict';  // default / fail-safe
+
+// TRAVEL_CHECK controls the anti-teleport travel-time validation layered on top
+// of the replay (only meaningful when REPLAY_MODE !== 'off').  The replay alone
+// cannot catch a crafted log that teleports a chef across the map every tick:
+// the server recomputes the SAME inflated score from that log, so it "matches".
+// This check rejects runs containing physically impossible chef movement.
+//   'enforce' (default / fail-safe): reject with replay_unreachable — but only
+//             when REPLAY_MODE === 'strict' (so it inherits the same rollout gate).
+//   'log':    violations are logged but not rejected (rollout / tuning).
+//   'off':    the travel check is skipped entirely.  Must be set EXPLICITLY.
+const _rawTravelCheck = process.env.TRAVEL_CHECK;
+const TRAVEL_CHECK = _rawTravelCheck === 'off' ? 'off'
+                   : _rawTravelCheck === 'log' ? 'log'
+                   :                             'enforce';  // default / fail-safe
 
 // Canonical station table — built once at module load.
 const STATION_TABLE = buildStationTable(getCanonicalCounterIds());
@@ -249,7 +265,7 @@ export default async function handler(req, res) {
             const decodedInputs = decodeInputLog(inputTuples, STATION_TABLE);
             replaySummary = simulate({
                 seed,
-                config: defaultConfig(),
+                config: { ...defaultConfig(), checkTravel: TRAVEL_CHECK !== 'off' },
                 inputs: decodedInputs,
                 maxTicks,
             });
@@ -270,6 +286,26 @@ export default async function handler(req, res) {
             const serverScore     = Math.floor(replaySummary.score);
             const serverDelivered = replaySummary.delivered;
             const serverStreak    = replaySummary.bestStreak;
+
+            // Anti-teleport: the replay flags interactions that occur faster than
+            // the fastest possible chef travel between stations.  A score-matching
+            // teleport cheat is invisible to the mismatch check below (the server
+            // recomputes the same inflated score), so this is the layer that
+            // catches it.  Enforced only in strict + enforce; logged otherwise.
+            const travelViolations = replaySummary.travelViolations || 0;
+            if (travelViolations > 0) {
+                const tctx = {
+                    run_id,
+                    travel_violations: travelViolations,
+                    detail: replaySummary.firstTravelViolation,
+                    replay_mode: REPLAY_MODE,
+                    travel_check: TRAVEL_CHECK,
+                };
+                if (REPLAY_MODE === 'strict' && TRAVEL_CHECK === 'enforce') {
+                    return rejectAndLog(res, 400, 'replay_unreachable', tctx);
+                }
+                console.warn('[submit-score] would_reject_replay_unreachable', JSON.stringify(tctx));
+            }
 
             // Allow small floating-point drift on score (±1 point).
             const scoreMismatch     = Math.abs(serverScore - score) > 1;

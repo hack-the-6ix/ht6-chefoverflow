@@ -187,6 +187,31 @@ const NO_STAND_SLOT_PENALTY = 50;
 const CUSTOMER_EAT_TIME   = 10;    // seconds customer sits after delivery
 
 // ============================================================
+// TRAVEL-TIME / REACHABILITY VALIDATION (anti-teleport)
+// ============================================================
+// The sim applies each interact event immediately at its stamped tick and does
+// NOT model chef movement (FIDELITY NOTE A).  A *crafted* input log can therefore
+// make one chef interact with stations on opposite sides of the map on
+// consecutive ticks — physically impossible, yet scored as valid.  When
+// cfg.checkTravel is set, checkTravel() enforces a conservative LOWER BOUND on
+// the ticks that must elapse between a chef's consecutive interactions, derived
+// from the shortest walkable path between the two stations' standing tiles.
+//
+// The bound is deliberately LOOSE so it never false-rejects honest play:
+//   • Fastest real movement is the boosted rate moveDelay*0.5 = 0.09 s/tile.
+//     In sim-tick units that is 0.09 * 60 = 5.4 ticks/tile (12 ticks/tile
+//     unboosted).  Client movement and interaction tick-stamps share one clock
+//     (game.js gameLoop calls _tickSim(dt) and update(dt) with the same dt), so
+//     this holds at any framerate.
+//   • We assume an even faster 0.075 s/tile (TRAVEL_TICKS_PER_TILE = 4.5) and
+//     subtract a flat slack, and we take the MIN path over all standing-tile
+//     pairs — three independent margins.  Any honest (even boosted, high-refresh)
+//     run clears the bound; a teleporting cheat (≈0-tick delta over a 20+-tile
+//     cross-map path) violates it by a wide margin.
+const TRAVEL_TICKS_PER_TILE = 4.5;
+const TRAVEL_SLACK_TICKS    = 4;
+
+// ============================================================
 // MAP CONSTRUCTION (mirrored from game.js layout code)
 // ============================================================
 
@@ -417,6 +442,46 @@ function findAdjacentWalkable(map, stationX, stationY) {
 /** Manhattan distance (approximation of path length for movement delay). */
 function manhattanDist(x1, y1, x2, y2) {
   return Math.abs(x1 - x2) + Math.abs(y1 - y2);
+}
+
+/** All walkable (FLOOR) tiles orthogonally adjacent to a station — the tiles a
+ *  chef can stand on to interact with it. */
+function adjacentWalkableTiles(map, sx, sy) {
+  const out = [];
+  for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+    const nx = sx + dx, ny = sy + dy;
+    if (isWalkable(map, nx, ny)) out.push({ x: nx, y: ny });
+  }
+  return out;
+}
+
+/**
+ * Multi-source BFS over walkable tiles.  Returns a flat distance array indexed
+ * by (y * MAP_WIDTH + x); -1 means unreachable.  Used by the travel-time check
+ * to find the shortest walkable path (in tiles) between two stations' standing
+ * tiles.  Cached per source in createSim, so this runs at most once per station.
+ */
+function bfsField(map, sources) {
+  const dist = new Array(MAP_WIDTH * MAP_HEIGHT).fill(-1);
+  const queue = [];
+  for (const s of sources) {
+    const idx = s.y * MAP_WIDTH + s.x;
+    if (dist[idx] === -1) { dist[idx] = 0; queue.push(s); }
+  }
+  let head = 0;
+  while (head < queue.length) {
+    const cur = queue[head++];
+    const cd  = dist[cur.y * MAP_WIDTH + cur.x];
+    for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+      const nx = cur.x + dx, ny = cur.y + dy;
+      if (!isWalkable(map, nx, ny)) continue;
+      const ni = ny * MAP_WIDTH + nx;
+      if (dist[ni] !== -1) continue;
+      dist[ni] = cd + 1;
+      queue.push({ x: nx, y: ny });
+    }
+  }
+  return dist;
 }
 
 // ============================================================
@@ -861,6 +926,9 @@ export function createSim({ seed, config = {} }) {
     rush: { active: false, timeLeft: 0, cooldown: 20 },
     // Game-over flag
     gameOver: false,
+    // Anti-teleport travel validation (only populated when cfg.checkTravel).
+    travelViolations:     0,
+    firstTravelViolation: null,
   };
 
   // Chefs array — _gsRef is a back-pointer so interactWithStation can mutate gs.
@@ -875,10 +943,66 @@ export function createSim({ seed, config = {} }) {
     waitingAt:    null,
     waitingAtStove: null,
     _gsRef:       gs,  // back-reference; not serialised in summary/snapshot
+    // Anti-teleport tracking (only used when cfg.checkTravel).  Starts null so
+    // the first interaction is measured from the chef's spawn tile (x, y).
+    _lastStationId:    null,
+    _lastInteractTick: 0,
   }));
 
   // Pre-fill the upcoming queue (mirrors startGame calling refillUpcomingQueue())
   refillUpcomingQueue(gs, rng);
+
+  // ---- Travel-time validation (only active when cfg.checkTravel) ----
+  // BFS distance fields are cached per source key; station positions are static
+  // so each field is computed at most once per run.
+  const travelFieldCache = new Map();
+
+  function travelFieldFor(chef) {
+    const key = chef._lastStationId === null ? `start_${chef.id}` : chef._lastStationId;
+    let field = travelFieldCache.get(key);
+    if (field) return field;
+
+    let sources;
+    if (chef._lastStationId === null) {
+      sources = [{ x: chef.x, y: chef.y }];  // spawn tile (a walkable FLOOR tile)
+    } else {
+      const info = getStationById(stations, chef._lastStationId);
+      sources = info ? adjacentWalkableTiles(map, info.station.x, info.station.y) : [];
+    }
+    field = bfsField(map, sources);
+    travelFieldCache.set(key, field);
+    return field;
+  }
+
+  // Records a violation (does NOT drop the interaction — score is still computed
+  // so the caller can report both the score and the travel violation).
+  function checkTravel(chef, station, tick) {
+    if (chef._lastStationId === station.id) return; // same station: no travel
+
+    const field   = travelFieldFor(chef);
+    const targets = adjacentWalkableTiles(map, station.x, station.y);
+    let minTiles = Infinity;
+    for (const t of targets) {
+      const d = field[t.y * MAP_WIDTH + t.x];
+      if (d >= 0 && d < minTiles) minTiles = d;
+    }
+
+    let detail = null;
+    if (minTiles === Infinity) {
+      detail = { reason: 'unreachable' };
+    } else {
+      const need    = Math.max(0, Math.floor(minTiles * TRAVEL_TICKS_PER_TILE) - TRAVEL_SLACK_TICKS);
+      const elapsed = tick - chef._lastInteractTick;
+      if (elapsed < need) detail = { reason: 'too_fast', tiles: minTiles, need, elapsed };
+    }
+
+    if (detail) {
+      gs.travelViolations++;
+      if (!gs.firstTravelViolation) {
+        gs.firstTravelViolation = { chefId: chef.id, tick, stationId: station.id, ...detail };
+      }
+    }
+  }
 
   // ---- Internal helpers ----
 
@@ -903,10 +1027,21 @@ export function createSim({ seed, config = {} }) {
     const stationInfo = getStationById(stations, ev.stationId);
     if (!stationInfo) return;
 
-    // Apply the interaction immediately — the client already enforced real travel
-    // timing; the sim trusts the stamped tick.
+    // Anti-teleport: enforce a conservative minimum travel time between this
+    // chef's consecutive interactions.  Counted, not dropped (see checkTravel).
+    if (cfg.checkTravel) {
+      checkTravel(chef, stationInfo.station, ev.tick);
+    }
+
+    // Apply the interaction immediately at the stamped tick.
     const delta = interactWithStation(chef, stationInfo, gs);
     if (delta !== 0) gs.score += delta;
+
+    // Record where this chef now stands, for the next travel check.
+    if (cfg.checkTravel) {
+      chef._lastStationId    = ev.stationId;
+      chef._lastInteractTick = ev.tick;
+    }
   }
 
   // ---- Exposed API ----
@@ -1012,6 +1147,9 @@ export function createSim({ seed, config = {} }) {
         bestStreak:  gs.bestStreak,
         time_secs:   gs.time,
         gameOver:    gs.gameOver,
+        // Anti-teleport: 0 / null unless cfg.checkTravel was set.
+        travelViolations:     gs.travelViolations,
+        firstTravelViolation: gs.firstTravelViolation,
       };
     },
   };
