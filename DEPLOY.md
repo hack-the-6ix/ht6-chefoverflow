@@ -29,6 +29,7 @@ The site **must** be served from a subdomain of `hackthe6ix.com` (currently `che
 | `PLAUSIBILITY_MODE` | no | `strict` (default) or `log`. `strict` rejects over-cap scores; `log` accepts but logs them (for tuning caps from real-run telemetry). **Leaving it unset enforces.** |
 | `REPLAY_MODE` | no | `strict` (default) rejects any submission whose server-side replay doesn't match the claimed score — this is the core anti-cheat. `shadow` runs the replay but only logs mismatches (tuning). `off` skips replay entirely. **Leaving it unset enforces;** only set `shadow`/`off` deliberately. |
 | `TRAVEL_CHECK` | no | Anti-teleport layer on top of the replay. `enforce` (default) rejects runs whose recorded chef movement is physically impossible (teleporting between distant stations) — catches crafted logs that the score-match check can't. `log` logs violations without rejecting (rollout/tuning). `off` skips it. Only takes effect when `REPLAY_MODE=strict`. **Leaving it unset enforces.** |
+| `BEHAVIOR_CHECK` | no | Human-realism heuristics on the replayed input log — looks for offline-solver fingerprints (fixed-cadence gaps, hops pinned to the travel bound, superhuman multi-chef parallelism). **Default is `log`, NOT enforce:** these are statistical signals with false-positive risk, so they ship non-enforcing and are tuned from `log`-mode telemetry before flipping to `enforce` (any flag → `behavior_implausible`). `off` skips them. Only meaningful when `REPLAY_MODE != off`. |
 | `HT6_API_URL` | no | Defaults to `https://v2.api.hackthe6ix.com` |
 
 The browser bundle also needs `SUPABASE_URL` and `SUPABASE_ANON_KEY` inline in `index.html` (already there). The anon key is only used for public SELECTs on the leaderboard.
@@ -92,6 +93,7 @@ Common reasons and what they mean:
 | `implausible_score` / `_delivered` / `_streak` | Plausibility caps tripped. Either an honest bug in the game's scoring or a tampered client. |
 | `replay_mismatch` | Server replay recomputed a different score than the client claimed. Tampered payload or a client/server sim-version skew. |
 | `replay_unreachable` | Recorded chef movement was physically impossible (teleporting). Crafted input log, or a sim-version skew. |
+| `behavior_implausible` | The input log matched offline-solver heuristics (see `BEHAVIOR_CHECK`). Only fires when `BEHAVIOR_CHECK=enforce`; in the default `log` mode this is logged as `would_reject_behavior` instead. |
 | `rate_limited` | Same email submitted within the last 30 s. |
 
 Vercel function logs (Vercel Dashboard → Project → Logs) also include the structured `[submit-score] rejected` log line for every rejection, with the relevant fields for that reason.

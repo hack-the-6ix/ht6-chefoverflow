@@ -17,6 +17,7 @@ import { db, hmacToken, json, readJsonBody, timingSafeEqual, verifyHt6Session } 
 import { simulate, defaultConfig, getCanonicalCounterIds } from '../sim/core.js';
 import { seedFromRunId } from '../sim/prng.js';
 import { buildStationTable, decodeInputLog } from '../sim/inputlog.js';
+import { analyzeBehavior } from '../sim/behavior.js';
 
 // Fix #2: Lowered from 250 to 150 (interim value). The definitive number should
 // come from real-run telemetry collected with PLAUSIBILITY_MODE=log. With replay
@@ -80,6 +81,19 @@ const TRAVEL_CHECK = _rawTravelCheck === 'off' ? 'off'
                    : _rawTravelCheck === 'log' ? 'log'
                    :                             'enforce';  // default / fail-safe
 
+// BEHAVIOR_CHECK controls the human-realism heuristics (sim/behavior.js) layered
+// on top of the replay (only meaningful when REPLAY_MODE !== 'off').  Unlike the
+// checks above, the SAFE DEFAULT is 'log', NOT 'enforce': these are statistical
+// signals that carry false-positive risk, so they ship non-enforcing and are
+// tuned from real-run telemetry before 'enforce' is flipped on deliberately.
+//   'log' (default):  flags are LOGGED as would_reject_behavior_<flag>; accepted.
+//   'enforce':        any flag → 400 behavior_implausible.  Set EXPLICITLY.
+//   'off':            heuristics + their telemetry collection are skipped.
+const _rawBehaviorCheck = process.env.BEHAVIOR_CHECK;
+const BEHAVIOR_CHECK = _rawBehaviorCheck === 'off'     ? 'off'
+                     : _rawBehaviorCheck === 'enforce' ? 'enforce'
+                     :                                   'log';  // default (non-enforcing)
+
 // Canonical station table — built once at module load.
 const STATION_TABLE = buildStationTable(getCanonicalCounterIds());
 
@@ -97,6 +111,24 @@ function gradeFromScore(score) {
     if (s < 5000) return 'B';
     if (s < 10000) return 'A';
     return 'S';
+}
+
+// Plausibility caps. Evaluated TWICE: as a cheap pre-filter on the
+// client-claimed values, and (authoritatively, post-replay) on the
+// server-recomputed values against the replay's REAL duration. Sharing the math
+// keeps the two call sites identical.
+function plausibilityViolations(score, delivered, streak, timeSecs) {
+    return [
+        score > timeSecs * MAX_SCORE_PER_SEC + MAX_BURST
+            ? { reason: 'implausible_score', ctx: { score, time_secs: timeSecs, cap: timeSecs * MAX_SCORE_PER_SEC + MAX_BURST } }
+            : null,
+        delivered > Math.floor(timeSecs / 2)
+            ? { reason: 'implausible_delivered', ctx: { delivered, time_secs: timeSecs, cap: Math.floor(timeSecs / 2) } }
+            : null,
+        streak > delivered
+            ? { reason: 'implausible_streak', ctx: { streak, delivered } }
+            : null,
+    ].filter(Boolean);
 }
 
 // Compact, structured logger so the reason for every rejection lands
@@ -193,17 +225,7 @@ export default async function handler(req, res) {
 
     // 3) Plausibility. In 'log' mode we record violations but accept the
     //    submission, so we can tune caps from real telemetry.
-    const plausibilityChecks = [
-        score > time_secs * MAX_SCORE_PER_SEC + MAX_BURST
-            ? { reason: 'implausible_score', ctx: { score, time_secs, cap: time_secs * MAX_SCORE_PER_SEC + MAX_BURST } }
-            : null,
-        delivered > Math.floor(time_secs / 2)
-            ? { reason: 'implausible_delivered', ctx: { delivered, time_secs, cap: Math.floor(time_secs / 2) } }
-            : null,
-        streak > delivered
-            ? { reason: 'implausible_streak', ctx: { streak, delivered } }
-            : null,
-    ].filter(Boolean);
+    const plausibilityChecks = plausibilityViolations(score, delivered, streak, time_secs);
     for (const v of plausibilityChecks) {
         if (PLAUSIBILITY_MODE === 'strict') {
             return rejectAndLog(res, 400, v.reason, v.ctx);
@@ -259,13 +281,19 @@ export default async function handler(req, res) {
 
         let replaySummary = null;
         let replayErr     = null;
+        const decodedInputs = decodeInputLog(inputTuples, STATION_TABLE);
 
         try {
             const seed       = seedFromRunId(run_id);
-            const decodedInputs = decodeInputLog(inputTuples, STATION_TABLE);
             replaySummary = simulate({
                 seed,
-                config: { ...defaultConfig(), checkTravel: TRAVEL_CHECK !== 'off' },
+                config: {
+                    ...defaultConfig(),
+                    checkTravel:     TRAVEL_CHECK !== 'off',
+                    // Collect per-hop telemetry only when the behavior heuristics
+                    // will consume it.
+                    travelTelemetry: BEHAVIOR_CHECK !== 'off',
+                },
                 inputs: decodedInputs,
                 maxTicks,
             });
@@ -307,6 +335,28 @@ export default async function handler(req, res) {
                 console.warn('[submit-score] would_reject_replay_unreachable', JSON.stringify(tctx));
             }
 
+            // Behavioral heuristics (sim/behavior.js): look for fingerprints of an
+            // offline solver — fixed cadence, hops pinned to the travel bound,
+            // superhuman multi-chef parallelism.  Default 'log' (non-enforcing).
+            if (BEHAVIOR_CHECK !== 'off') {
+                const behavior = analyzeBehavior({
+                    telemetry: replaySummary.travelTelemetry || [],
+                    inputs:    decodedInputs,
+                });
+                if (behavior.flags.length > 0) {
+                    const bctx = {
+                        run_id,
+                        behavior_flags: behavior.flags,
+                        behavior_stats: behavior.stats,
+                        behavior_check: BEHAVIOR_CHECK,
+                    };
+                    if (BEHAVIOR_CHECK === 'enforce') {
+                        return rejectAndLog(res, 400, 'behavior_implausible', { ...bctx, detail: behavior.flags.join(',') });
+                    }
+                    console.warn('[submit-score] would_reject_behavior', JSON.stringify(bctx));
+                }
+            }
+
             // Allow small floating-point drift on score (±1 point).
             const scoreMismatch     = Math.abs(serverScore - score) > 1;
             const deliveredMismatch = serverDelivered !== delivered;
@@ -333,15 +383,38 @@ export default async function handler(req, res) {
                 console.info('[submit-score] replay_ok', JSON.stringify({ run_id, server_score: serverScore, mode: REPLAY_MODE }));
             }
 
+            // Server-authoritative duration for the plausibility caps + the stored
+            // time. The pre-replay caps ran against the CLIENT-claimed time_secs,
+            // which a tamperer can inflate (e.g. claim 3600 for a 150 s run) to
+            // dodge the per-second cap. Re-run the caps here against the replay's
+            // REAL duration:
+            //   • on game-over, replaySummary.time_secs is the true end tick;
+            //   • otherwise the run genuinely lasted the claimed duration — the
+            //     submit_run RPC bounds time_secs to wall-clock (+slack) — so the
+            //     claim is authoritative and endurance passive score is counted.
+            const effectiveSeconds = replaySummary.gameOver
+                ? Math.floor(replaySummary.time_secs)
+                : time_secs;
+            const serverPlausibility = plausibilityViolations(
+                serverScore, serverDelivered, serverStreak, effectiveSeconds,
+            );
+            for (const v of serverPlausibility) {
+                const ctx = { run_id, ...v.ctx, effective_seconds: effectiveSeconds, source: 'replay', mode: REPLAY_MODE };
+                if (REPLAY_MODE === 'strict') {
+                    return rejectAndLog(res, 400, v.reason, ctx);
+                }
+                // shadow: log and continue with client values
+                logReject(`would_reject_${v.reason}`, ctx);
+            }
+
             // In strict mode: use server-recomputed authoritative values for the RPC.
             if (REPLAY_MODE === 'strict') {
                 rpcScore     = serverScore;
                 rpcDelivered = serverDelivered;
                 rpcStreak    = serverStreak;
-                // Use client time_secs — the sim's time is bounded by maxTicks which
-                // we derived from time_secs, so it can't exceed what the token age check
-                // allows.  The RPC's p_time_slack_ms handles minor clock skew.
-                rpcTimeSecs  = time_secs;
+                // Store the replay's REAL duration, not the client claim, so the
+                // leaderboard time_secs can't be inflated.
+                rpcTimeSecs  = effectiveSeconds;
                 rpcGrade     = gradeFromScore(serverScore);
             }
         }

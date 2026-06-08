@@ -929,6 +929,8 @@ export function createSim({ seed, config = {} }) {
     // Anti-teleport travel validation (only populated when cfg.checkTravel).
     travelViolations:     0,
     firstTravelViolation: null,
+    // Per-hop travel telemetry (only populated when cfg.travelTelemetry).
+    travelTelemetry:      [],
   };
 
   // Chefs array — _gsRef is a back-pointer so interactWithStation can mutate gs.
@@ -987,13 +989,28 @@ export function createSim({ seed, config = {} }) {
       if (d >= 0 && d < minTiles) minTiles = d;
     }
 
+    const elapsed = tick - chef._lastInteractTick;
+    let need = null;
     let detail = null;
     if (minTiles === Infinity) {
       detail = { reason: 'unreachable' };
     } else {
-      const need    = Math.max(0, Math.floor(minTiles * TRAVEL_TICKS_PER_TILE) - TRAVEL_SLACK_TICKS);
-      const elapsed = tick - chef._lastInteractTick;
+      need = Math.max(0, Math.floor(minTiles * TRAVEL_TICKS_PER_TILE) - TRAVEL_SLACK_TICKS);
       if (elapsed < need) detail = { reason: 'too_fast', tiles: minTiles, need, elapsed };
+    }
+
+    // Per-hop telemetry (only when requested): records EVERY different-station
+    // hop, not just violations, so downstream behavior heuristics can reason
+    // about how tightly a run hugs the travel lower bound.
+    if (cfg.travelTelemetry) {
+      gs.travelTelemetry.push({
+        chefId:    chef.id,
+        tick,
+        stationId: station.id,
+        tiles:     minTiles === Infinity ? null : minTiles,
+        need,
+        elapsed,
+      });
     }
 
     if (detail) {
@@ -1029,7 +1046,10 @@ export function createSim({ seed, config = {} }) {
 
     // Anti-teleport: enforce a conservative minimum travel time between this
     // chef's consecutive interactions.  Counted, not dropped (see checkTravel).
-    if (cfg.checkTravel) {
+    // Also runs when only telemetry is requested (cfg.travelTelemetry), since the
+    // per-hop need/elapsed it records is what the behavior heuristics consume.
+    const trackTravel = cfg.checkTravel || cfg.travelTelemetry;
+    if (trackTravel) {
       checkTravel(chef, stationInfo.station, ev.tick);
     }
 
@@ -1038,7 +1058,7 @@ export function createSim({ seed, config = {} }) {
     if (delta !== 0) gs.score += delta;
 
     // Record where this chef now stands, for the next travel check.
-    if (cfg.checkTravel) {
+    if (trackTravel) {
       chef._lastStationId    = ev.stationId;
       chef._lastInteractTick = ev.tick;
     }
@@ -1150,6 +1170,8 @@ export function createSim({ seed, config = {} }) {
         // Anti-teleport: 0 / null unless cfg.checkTravel was set.
         travelViolations:     gs.travelViolations,
         firstTravelViolation: gs.firstTravelViolation,
+        // Per-hop telemetry: [] unless cfg.travelTelemetry was set.
+        travelTelemetry:      gs.travelTelemetry,
       };
     },
   };
