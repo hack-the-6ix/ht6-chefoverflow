@@ -3619,27 +3619,39 @@ async function startGame() {
     // sim is seeded: from run_id at tick 0. There is no mid-run reseed (which
     // would wipe the input log) and no throwaway seed for a ranked run (which
     // the server can't replay) — the two bugs behind the replay_mismatch reports.
-    const token = await _acquireRunToken(6000);
-    if (token && token.run_id) {
-        _runToken = token;
-        _runRanked = true;
-        setLeaderboardOffline(false);
-        _startSimWithSeed(seedFromRunId(token.run_id), true);
-        _setStartingNotice('');
-    } else {
-        // Server unreachable: allow UNRANKED play. The submit path saves locally
-        // and explains, instead of posting an unverifiable run that gets rejected.
-        _runToken = null;
-        _runRanked = false;
-        setLeaderboardOffline(true);
-        _startSimWithSeed((Math.random() * 0xFFFFFFFF) >>> 0, false);
-        _setStartingNotice('Offline — this run will be unranked (saved locally).', 4000);
-    }
+    try {
+        const token = await _acquireRunToken(6000);
+        if (token && token.run_id) {
+            _runToken = token;
+            _runRanked = true;
+            setLeaderboardOffline(false);
+            _startSimWithSeed(seedFromRunId(token.run_id), true);
+            _setStartingNotice('');
+        } else {
+            // Server unreachable: allow UNRANKED play. The submit path saves locally
+            // and explains, instead of posting an unverifiable run that gets rejected.
+            _runToken = null;
+            _runRanked = false;
+            setLeaderboardOffline(true);
+            _startSimWithSeed((Math.random() * 0xFFFFFFFF) >>> 0, false);
+            _setStartingNotice('Offline — this run will be unranked (saved locally).', 4000);
+        }
 
-    GameState.running = true;
-    document.getElementById('pause-btn').disabled = false;
-    lastTime = performance.now();
-    _startingRun = false;
+        GameState.running = true;
+        document.getElementById('pause-btn').disabled = false;
+        lastTime = performance.now();
+    } catch (err) {
+        // Never strand the player with a locked start button. Leave the game
+        // stopped but recoverable so a second click can retry.
+        console.error('[run] startGame failed', err);
+        GameState.running = false;
+        document.getElementById('start-btn').disabled = false;
+        document.getElementById('pause-btn').disabled = true;
+        document.body.classList.remove('game-running');
+        _setStartingNotice('Could not start the run. Try again.', 4000);
+    } finally {
+        _startingRun = false;
+    }
 
     // Warm a token for the NEXT game so the next start is instant.
     _prefetchRunToken();
