@@ -2759,6 +2759,15 @@ function persistPendingRunForAuth() {
                 failedOrders: GameState.failedOrders,
                 difficulty: GameState.difficulty,
             },
+            // Persist the proof needed for server replay across the OAuth redirect.
+            // Without this, the reloaded page has an empty _inputLog and the server
+            // replays nothing → replay_mismatch. Only stored for verified runs
+            // (seeded from run_id); unverified runs aren't submittable anyway.
+            sim: _simSeededFromRunId ? {
+                seed: _simSeed,
+                tick: _simTick,
+                log: encodeInputLog(_inputLog), // compact tuples (re-decoded on restore)
+            } : null,
             receipt: (() => { try { return ScoreGuard.receipt(); } catch (_) { return null; } })(),
             savedAt: Date.now(),
         }));
@@ -2790,6 +2799,21 @@ function restorePendingRunIfAny() {
     GameState.ordersDelivered = saved.stats.ordersDelivered;
     GameState.failedOrders = saved.stats.failedOrders;
     GameState.difficulty = saved.stats.difficulty;
+
+    // Restore the replay proof so the post-OAuth submission carries the same
+    // seed + input log the run was played with. The live _sim object can't be
+    // serialized, so submit falls back to GameState for the score/streak/
+    // delivered values (restored above) and to _inputLog for the replay log.
+    if (saved.sim && Array.isArray(saved.sim.log) && saved.sim.seed != null) {
+        _simSeed = saved.sim.seed >>> 0;
+        _simTick = saved.sim.tick || 0;
+        _simSeededFromRunId = true;
+        try {
+            _inputLog = decodeInputLog(saved.sim.log).map(e => ({
+                tick: e.tick, type: 'interact', chefId: e.chefId, stationId: e.stationId,
+            }));
+        } catch (_) { _inputLog = []; }
+    }
 
     document.getElementById('final-score').textContent = Math.floor(saved.stats.score);
     document.getElementById('best-streak').textContent = saved.stats.bestStreak;
