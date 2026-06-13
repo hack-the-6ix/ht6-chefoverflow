@@ -83,7 +83,12 @@ function decodeInputLog(tuples) {
 // ============================================================
 let _sim         = null;   // current createSim() instance (null until seed ready)
 let _simSeed     = null;   // uint32 seed used to create _sim
-let _simReady    = false;  // true once _sim is initialised with a real run_id seed
+let _simReady    = false;  // true once _sim is initialised (any seed)
+// True only when _sim was seeded from the server-issued run_id. A run that plays
+// under the temporary local fallback seed cannot be reproduced by the server
+// replay, so it must NOT be submitted to the leaderboard (it would be rejected
+// with the confusing "replay did not match" error).
+let _simSeededFromRunId = false;
 let _inputLog    = [];     // raw events: { tick, chefId, stationId }
 let _simTick     = 0;      // ticks stepped so far (for input stamping)
 let _dtAccum     = 0;      // fixed-timestep accumulator (seconds)
@@ -125,15 +130,16 @@ function _tickSim(realDt) {
  * Start the sim with a seed.  Called once run_id is known.
  * If called a second time (game restart), resets all sim state.
  */
-function _startSimWithSeed(seed) {
+function _startSimWithSeed(seed, fromRunId = false) {
     _simSeed   = seed;
     _sim       = createSim({ seed, config: defaultConfig() });
     _simReady  = true;
+    _simSeededFromRunId = fromRunId;
     _simTick   = 0;
     _dtAccum   = 0;
     _inputLog  = [];
     _pendingSimEvents = [];
-    console.info('[sim] started with seed', seed.toString(16));
+    console.info('[sim] started with seed', seed.toString(16), fromRunId ? '(run_id)' : '(fallback)');
 }
 
 const canvas = document.getElementById('game-canvas');
@@ -2833,6 +2839,37 @@ let _runToken = null; // { run_id, token } issued by start-run
 let _runTokenRetryTimer = null;
 const _RUN_TOKEN_MAX_ATTEMPTS = 8;
 
+// A run token fetched AHEAD of the next game (on page load and after each game
+// ends). Having one in hand lets startGame() seed the sim from run_id at tick 0,
+// so the run is verifiable from its very first tick — no mid-run reseed (which
+// visibly resets the score) and no "token arrived after the run ended" race that
+// leaves the run unverifiable (the root cause of replay_mismatch rejections).
+let _prefetchedToken = null;
+let _prefetchInFlight = false;
+
+async function _prefetchRunToken() {
+    if (_prefetchedToken || _prefetchInFlight) return;
+    _prefetchInFlight = true;
+    try {
+        const res = await fetch(`${_fnBase}/start-run`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: '{}',
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.run_id && data.token) {
+                _prefetchedToken = { run_id: data.run_id, token: data.token };
+                setLeaderboardOffline(false);
+            }
+        }
+    } catch (_) {
+        // Ignore — startGame() falls back to the background-fetch path.
+    } finally {
+        _prefetchInFlight = false;
+    }
+}
+
 function startRun() {
     _runToken = null;
     if (_runTokenRetryTimer) {
@@ -2873,7 +2910,7 @@ async function _issueRunToken(attempt) {
                 // arrived are discarded — they're the first few seconds of play
                 // and the sim will re-spawn orders from tick 0 anyway.
                 if (GameState.running && !GameState.gameOver) {
-                    _startSimWithSeed(seedFromRunId(data.run_id));
+                    _startSimWithSeed(seedFromRunId(data.run_id), true);
                 }
                 return;
             }
@@ -3056,6 +3093,21 @@ async function _submitVerifiedScoreImpl() {
 
     if (!_runToken) {
         statusEl.textContent = 'No run token. Refresh and play a fresh game before submitting.';
+        await renderLeaderboard();
+        return;
+    }
+
+    // The sim must have been seeded from THIS run's run_id for the server replay
+    // to reproduce the score. If the run token only arrived after the game ended,
+    // the run played under a local fallback seed — the server would reject it with
+    // a confusing "replay did not match" error. Detect that here and keep the run
+    // local-only with a clear message instead.
+    if (!_simSeededFromRunId || _simSeed !== seedFromRunId(_runToken.run_id)) {
+        statusEl.textContent = 'This run started before its run token was ready, so it can’t be ranked (saved locally). Start a fresh game for a ranked score.';
+        console.warn('[ht6] skip submit: sim not seeded from run_id', {
+            seededFromRunId: _simSeededFromRunId,
+            simSeed: _simSeed, expected: seedFromRunId(_runToken.run_id),
+        });
         await renderLeaderboard();
         return;
     }
@@ -3510,15 +3562,25 @@ function startGame() {
     // A fresh run supersedes any persisted end screen from a prior game.
     try { localStorage.removeItem(PENDING_RUN_KEY); } catch (_) {}
 
-    // B2b: start the sim immediately with a temporary local seed so the game
-    // is playable from tick 0.  _issueRunToken() will replace it with the real
-    // server-derived seed as soon as run_id arrives (within the first retry).
-    // Using a local random seed here is acceptable — if the run_id never arrives
-    // the submit will be rejected (no token), matching prior behaviour.
-    const fallbackSeed = (Math.random() * 0xFFFFFFFF) >>> 0;
-    _startSimWithSeed(fallbackSeed);
-
-    startRun(); // async — will call _startSimWithSeed(seedFromRunId(run_id)) on success
+    // Seed the sim. Preferred path: a run token was prefetched (on page load or
+    // when the previous game ended), so we seed from run_id at tick 0 — the run
+    // is verifiable from its first tick and the score never resets mid-run.
+    if (_prefetchedToken && _prefetchedToken.run_id) {
+        if (_runTokenRetryTimer) { clearTimeout(_runTokenRetryTimer); _runTokenRetryTimer = null; }
+        _runToken = _prefetchedToken;
+        _prefetchedToken = null;
+        setLeaderboardOffline(false);
+        _startSimWithSeed(seedFromRunId(_runToken.run_id), true);
+    } else {
+        // Fallback: no token yet. Start with a temporary local seed so the game
+        // is playable from tick 0; _issueRunToken() reseeds from run_id the moment
+        // it arrives (while the run is still live). If the token only arrives after
+        // the run ends, the run stays unverified and the submit path saves it
+        // locally instead of failing server-side with replay_mismatch.
+        const fallbackSeed = (Math.random() * 0xFFFFFFFF) >>> 0;
+        _startSimWithSeed(fallbackSeed, false);
+        startRun(); // async — will call _startSimWithSeed(seedFromRunId(run_id)) on success
+    }
     GameState.difficulty = 1.0;
     GameState.streak = 0;
     GameState.bestStreak = 0;
@@ -3581,6 +3643,9 @@ function gradeFromScore(score) {
 function endGame() {
     GameState.running = false;
     GameState.gameOver = true;
+
+    // Warm a run token for the NEXT game so it can be seeded from run_id at tick 0.
+    _prefetchRunToken();
 
     // B2b: sync final state from sim before displaying.
     // _syncFromSim() has already been called in the last update() tick, but call
@@ -3885,6 +3950,9 @@ window.KitchenAPI = {
 SkinStore.init();
 initChefs();
 lastTime = performance.now();
+// Warm a run token before the player's first game so the sim is seeded from
+// run_id at tick 0 (verifiable run, no mid-run score reset).
+_prefetchRunToken();
 requestAnimationFrame(gameLoop);
 renderLeaderboard();
 renderSideLeaderboard();
