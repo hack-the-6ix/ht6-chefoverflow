@@ -3634,7 +3634,9 @@ async function startGame() {
             _runRanked = false;
             setLeaderboardOffline(true);
             _startSimWithSeed((Math.random() * 0xFFFFFFFF) >>> 0, false);
-            _setStartingNotice('Offline — this run will be unranked (saved locally).', 4000);
+            // Persist (no auto-hide) so the "unranked" state stays visible for the
+            // whole run; endGame() clears leaderboard-status at game over.
+            _setStartingNotice('Offline — this run will be unranked (saved locally).');
         }
 
         GameState.running = true;
