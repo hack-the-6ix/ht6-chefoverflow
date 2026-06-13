@@ -370,10 +370,13 @@ export default async function handler(req, res) {
                     delivered: { server: serverDelivered, client: delivered },
                     streak:    { server: serverStreak,    client: streak },
                 };
-                const ctx = { run_id, diff, mode: REPLAY_MODE };
+                const ctx = { run_id, diff, mode: REPLAY_MODE, input_tuples: inputTuples.length };
 
                 if (REPLAY_MODE === 'strict') {
-                    return rejectAndLog(res, 400, 'replay_mismatch', ctx);
+                    // Return the diff to the client (not just server logs) so the exact
+                    // divergence is visible in the browser for diagnosis.
+                    logReject('replay_mismatch', ctx);
+                    return json(res, 400, { error: 'replay_mismatch', diff, input_tuples: inputTuples.length });
                 }
                 // shadow: log and continue with client values
                 console.warn('[submit-score] would_reject_replay_mismatch', JSON.stringify(ctx));

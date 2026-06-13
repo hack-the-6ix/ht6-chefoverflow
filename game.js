@@ -3228,7 +3228,18 @@ async function _submitVerifiedScoreImpl() {
                 write_failed: 'Server write failed. Visit /api/health.',
                 submit_failed: 'Submission rejected by server logic.',
             };
-            const friendly = ERROR_MESSAGES[reason];
+            let friendly = ERROR_MESSAGES[reason];
+            // DIAGNOSTIC: surface the server's replay diff inline so we can see the
+            // exact divergence (server vs client score/delivered/streak) without
+            // digging through Vercel logs. `sent N events` shows how many input
+            // tuples the client posted — 0 here means the input log never reached
+            // the server (seed/persistence issue) vs a near-miss (engine skew).
+            if (reason === 'replay_mismatch' && data?.diff) {
+                const d = data.diff;
+                friendly = `Replay mismatch — server:${d.score?.server}/${d.delivered?.server}/${d.streak?.server} ` +
+                    `client:${d.score?.client}/${d.delivered?.client}/${d.streak?.client} ` +
+                    `(score/delivered/streak), sent ${data.input_tuples ?? '?'} events.`;
+            }
             // For unmapped reasons, surface the raw payload so we can debug
             // without grepping server logs.
             const fallback = `Submission rejected: ${reason}` +
